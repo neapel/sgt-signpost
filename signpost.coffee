@@ -25,6 +25,21 @@ dys = [ -1, -1, 0, 1, 1,  1,  0, -1 ]
 
 DIR_OPPOSITE = (d) -> 0|((d + 4) % 8)
 
+whichdir = (fromx, fromy, tox, toy) ->
+	dx = tox - fromx
+	dy = toy - fromy
+	if dx and dy and Math.abs(dx) != Math.abs(dy)
+		return -1
+	if dx
+		dx = dx / Math.abs(dx) # limit to (-1, 0, 1)
+	if dy
+		dy = dy / Math.abs(dy) # ditto
+	for i in [0 .. DIR_MAX - 1]
+		if dx == dxs[i] and dy == dys[i]
+			return i
+	return -1
+
+
 class game_state
 	constructor: (@w, @h) ->
 		@n = @w * @h
@@ -47,6 +62,30 @@ class game_state
 		@numsi.fill(-1)
 		null
 
+	whichdiri: (fromi, toi) ->
+		whichdir(0|(fromi % @w), 0|(fromi / @w), 0|(toi % @w), 0|(toi / @w))
+
+	ispointing: (fromx, fromy, tox, toy) ->
+		dir = @dirs[fromy * @w + fromx]
+		# (by convention) squares do not poto themselves.
+		if fromx == tox and fromy == toy
+			return false
+		# the final number points to nothing.
+		if @nums[fromy * @w + fromx] == @n
+			return false
+		while true
+			if not INGRID(this, fromx, fromy)
+				return false
+			if fromx == tox and fromy == toy
+				return true
+			fromx += dxs[dir]
+			fromy += dys[dir]
+		null # not reached
+
+	ispointingi: (fromi, toi) ->
+		@ispointing(0|(fromi % @w), 0|(fromi / @w), 0|(toi % @w), 0|(toi / @w))
+
+
 
 FLAG_IMMUTABLE = 1
 FLAG_ERROR = 2
@@ -56,45 +95,9 @@ FLAG_ERROR = 2
 ISREALNUM = (state, num) ->
 	num > 0 and num <= state.n
 
-whichdir = (fromx, fromy, tox, toy) ->
-	dx = tox - fromx
-	dy = toy - fromy
-	if dx and dy and Math.abs(dx) != Math.abs(dy)
-		return -1
-	if dx
-		dx = dx / Math.abs(dx) # limit to (-1, 0, 1)
-	if dy
-		dy = dy / Math.abs(dy) # ditto
-	for i in [0 .. DIR_MAX - 1]
-		if dx == dxs[i] and dy == dys[i]
-			return i
-	return -1
 
-whichdiri = (state, fromi, toi) ->
-	w = state.w
-	whichdir(0|(fromi % w), 0|(fromi / w), 0|(toi % w), 0|(toi / w))
 
-ispointing = (state, fromx, fromy, tox, toy) ->
-	w = state.w
-	dir = state.dirs[fromy*w+fromx]
-	# (by convention) squares do not poto themselves.
-	if fromx == tox and fromy == toy
-		return false
-	# the final number points to nothing.
-	if state.nums[fromy*w + fromx] == state.n
-		return false
-	while true
-		if not INGRID(state, fromx, fromy)
-			return false
-		if fromx == tox and fromy == toy
-			return true
-		fromx += dxs[dir]
-		fromy += dys[dir]
-	null # not reached
 
-ispointingi = (state, fromi, toi) ->
-	w = state.w
-	ispointing(state, 0|(fromi % w), 0|(fromi / w), 0|(toi % w), 0|(toi / w))
 
 # Taking the number 'num', work out the gap between it and the next
 # available number up or down (depending on d). Return 1 if the region
@@ -126,12 +129,12 @@ isvalidmove = (state, clever, fromx, fromy, tox, toy) ->
 	if not INGRID(state, fromx, fromy) or not INGRID(state, tox, toy)
 		return false
 	# can only move where we point
-	if not ispointing(state, fromx, fromy, tox, toy)
+	if not state.ispointing(fromx, fromy, tox, toy)
 		return false
 	nfrom = state.nums[from]
 	nto = state.nums[to]
 	# can't move _from_ the preset final number, or _to_ the preset 1.
-	if (((nfrom == state.n) and (state.flags[from] & FLAG_IMMUTABLE)) or ((nto   == 1) and (state.flags[to]   & FLAG_IMMUTABLE)))
+	if (((nfrom == state.n) and (state.flags[from] & FLAG_IMMUTABLE)) or ((nto   == 1) and (state.flags[to] & FLAG_IMMUTABLE)))
 		return false
 	# can't create a new connection between cells in the same region
 	# as that would create a loop.
@@ -273,7 +276,7 @@ new_game_fill = (state, headi, taili) ->
 	# If we get here we have headi and taili set but unconnected
 	# by direction: we need to set headi's direction so as to point
 	# at taili.
-	state.dirs[headi] = whichdiri(state, headi, taili)
+	state.dirs[headi] = state.whichdiri(headi, taili)
 	# it could happen that our last two weren't in line; if that's the
 	# case, we have to start again.
 	state.dirs[headi] != -1
@@ -317,9 +320,9 @@ new_game_strip = (state) ->
 	copy = dup_game(state)
 	strip_nums(copy)
 	return true if solve_state(copy) > 0
+	scratch = [0 .. state.n - 1]
+	scratch.shuffle()
 	solved = do ->
-		scratch = [0 .. state.n - 1]
-		scratch.shuffle()
 		# This is scungy. It might just be quick enough.
 		# It goes through, adding set numbers in empty squares
 		# until either we run out of empty squares (in the one
@@ -373,10 +376,10 @@ new_game_desc = (params) ->
 		state.flags[taili] |= FLAG_IMMUTABLE
 		# This will have filled in directions and _all_ numbers.
 		# Store the game definition for this, as the solved-state.
-		if new_game_strip(state) or true
+		if new_game_strip(state)
 			strip_nums(state)
 			return generate_desc(state, false)
-	throw 'nope'
+	throw 'Game generation failed.'
 
 validate_desc = (params, desc) ->
 	try
@@ -563,35 +566,35 @@ update_numbers = (state) ->
 	null
 
 check_completion = (state, mark_errors) ->
-	error = 0
+	error = false
 	# NB This only marks errors that are possible to perpetrate with
 	# the current UI in interpret_move. Things like forming loops in
 	# linked sections and having numbers not add up should be forbidden
 	# by the code elsewhere, so we don't bother marking those (because
 	# it would add lots of tricky drawing code for very little gain).
 	if mark_errors
-		for j in [0 .. state.n]
+		for j in [0 .. state.n - 1]
 			state.flags[j] &= ~FLAG_ERROR
 	# Search for repeated numbers.
 	for j in [0 .. state.n - 1]
 		if state.nums[j] > 0 and state.nums[j] <= state.n
-			for k in [j + 1 .. state.n - 1]
+			for k in [j + 1 .. state.n - 1] by 1
 				if state.nums[k] == state.nums[j]
 					if mark_errors
 						state.flags[j] |= FLAG_ERROR
 						state.flags[k] |= FLAG_ERROR
-					error = 1
+					error = true
 	# Search and mark numbers n not pointing to n+1; if any numbers
 	# are missing we know we've not completed.
-	complete = 1
+	complete = true
 	for n in [1 .. state.n - 1]
-		if state.numsi[n] == -1 or state.numsi[n+1] == -1
-			complete = 0
-		else if not ispointingi(state, state.numsi[n], state.numsi[n+1])
+		if state.numsi[n] == -1 or state.numsi[n + 1] == -1
+			complete = false
+		else if not state.ispointingi(state.numsi[n], state.numsi[n + 1])
 			if mark_errors
 				state.flags[state.numsi[n]] |= FLAG_ERROR
-				state.flags[state.numsi[n+1]] |= FLAG_ERROR
-			error = 1
+				state.flags[state.numsi[n + 1]] |= FLAG_ERROR
+			error = true
 		else
 			# make sure the link is explicitly made here; for instance, this
 			# is nice if the user drags from 2 out (making 3) and a 4 is also
@@ -601,16 +604,16 @@ check_completion = (state, mark_errors) ->
 	# Search and mark numbers less than 0, or 0 with links.
 	for n in [1 .. state.n - 1]
 		if state.nums[n] < 0 or (state.nums[n] == 0 and (state.next[n] != -1 or state.prev[n] != -1))
-			error = 1
+			error = true
 			if mark_errors
 				state.flags[n] |= FLAG_ERROR
-	return 0 if error
+	return false if error
 	return complete
 
 new_game = (params, desc) ->
 	state = unpick_desc(params, desc)
 	update_numbers(state)
-	check_completion(state, 1) # update any auto-links
+	check_completion(state, true) # update any auto-links
 	state
 
 # --- Solver ---
@@ -690,7 +693,7 @@ solve_state = (state) ->
 	if state.impossible
 		-1
 	else
-		check_completion(state, 0)
+		if check_completion(state, false) then 1 else 0
 
 solve_game = (state, currstate) ->
 	tosolve = dup_game(currstate)
@@ -919,7 +922,7 @@ execute_move = (state, move) ->
 	# done
 	if ret
 		update_numbers(ret)
-		if check_completion(ret, 1)
+		if check_completion(ret, true)
 			ret.completed = true
 	return ret
 
@@ -1195,7 +1198,6 @@ game_redraw = (dr, ds, state, ui) ->
 	if ui.dragging
 		uicopy = ui.clone()
 		movestr = interpret_move(state, uicopy, ds, ui.dx, ui.dy, LEFT_RELEASE)
-		console.log 'next', movestr, uicopy, ui.dx, ui.dy
 		if movestr
 			state = postdrop = execute_move(state, movestr)
 	if not ds.started
@@ -1214,9 +1216,9 @@ game_redraw = (dr, ds, state, ui) ->
 				if x == ui.sx and y == ui.sy
 					f |= F_DRAG_SRC
 				else if ui.drag_is_from
-					if not ispointing(state, ui.sx, ui.sy, x, y)
+					if not state.ispointing(ui.sx, ui.sy, x, y)
 						f |= F_DIM
-				else if not ispointing(state, x, y, ui.sx, ui.sy)
+				else if not state.ispointing(x, y, ui.sx, ui.sy)
 					f |= F_DIM
 			if state.impossible or state.nums[i] < 0 or state.flags[i] & FLAG_ERROR
 				f |= F_ERROR
@@ -1247,7 +1249,7 @@ game_redraw = (dr, ds, state, ui) ->
 
 
 window.onload = ->
-	params = new game_params(6, 6, true)
+	params = new game_params(9, 9, true)
 	desc = new_game_desc(params)
 	state = [unpick_desc(params, desc)]
 	ui = new game_ui()
