@@ -1,9 +1,6 @@
 # signpost.c: implementation of the janko game 'arrow path'
 
 
-INGRID = (s, x, y) ->
-	x >= 0 and x < s.w and y >= 0 and y < s.h
-
 class game_params
 	constructor: (@w, @h, @force_corner_start) ->
 		throw 'W, H must at least be 2' if @w < 2 or @h < 2
@@ -39,6 +36,15 @@ whichdir = (fromx, fromy, tox, toy) ->
 			return i
 	return -1
 
+FLAG_IMMUTABLE = 1
+FLAG_ERROR = 2
+
+# Generally useful functions
+
+ISREALNUM = (state, num) ->
+	num > 0 and num <= state.n
+
+
 
 class game_state
 	constructor: (@w, @h) ->
@@ -62,6 +68,9 @@ class game_state
 		@numsi.fill(-1)
 		null
 
+	in_grid: (x, y) ->
+		x >= 0 and x < @w and y >= 0 and y < @h
+
 	whichdiri: (fromi, toi) ->
 		whichdir(0|(fromi % @w), 0|(fromi / @w), 0|(toi % @w), 0|(toi / @w))
 
@@ -74,7 +83,7 @@ class game_state
 		if @nums[fromy * @w + fromx] == @n
 			return false
 		while true
-			if not INGRID(this, fromx, fromy)
+			if not @in_grid(fromx, fromy)
 				return false
 			if fromx == tox and fromy == toy
 				return true
@@ -85,92 +94,72 @@ class game_state
 	ispointingi: (fromi, toi) ->
 		@ispointing(0|(fromi % @w), 0|(fromi / @w), 0|(toi % @w), 0|(toi / @w))
 
+	# Taking the number 'num', work out the gap between it and the next
+	# available number up or down (depending on d). Return 1 if the region
+	# at (x,y) will fit in that gap, or 0 otherwise.
+	move_couldfit: (num, d, x, y) ->
+		i = y * @w + x
+		# The 'gap' is the number of missing numbers in the grid between
+		# our number and the next one in the sequence (up or down), or
+		# the end of the sequence (if we happen not to have 1/n present)
+		n = num + d
+		gap = 0
+		while ISREALNUM(this, n) and @numsi[n] == -1
+			n += d
+			gap++
+		if gap == 0
+			# no gap, so the only allowable move is that that directly
+			# links the two numbers.
+			@nums[i] != num + d
+		else if @prev[i] == -1 and @next[i] == -1
+			true # single unconnected square, always OK
+		else
+			@dsf.size(i) <= gap
 
+	isvalidmove: (clever, fromx, fromy, tox, toy) ->
+		return false unless @in_grid(fromx, fromy)
+		return false unless @in_grid(tox, toy)
+		# can only move where we point
+		return false unless @ispointing(fromx, fromy, tox, toy)
+		from = fromy * @w + fromx
+		to = toy * @w + tox
+		nfrom = @nums[from]
+		nto = @nums[to]
+		# can't move _from_ the preset final number, or _to_ the preset 1.
+		return false if nfrom == @n and (@flags[from] & FLAG_IMMUTABLE)
+		return false if nto == 1 and (@flags[to] & FLAG_IMMUTABLE)
+		# can't create a new connection between cells in the same region
+		# as that would create a loop.
+		return false if @dsf.canonify(from) == @dsf.canonify(to)
+		# if both cells are actual numbers, can't drag if we're not
+		# one digit apart.
+		if ISREALNUM(this, nfrom) and ISREALNUM(this, nto)
+			nfrom == nto - 1
+		else if clever and ISREALNUM(this, nfrom)
+			@move_couldfit(nfrom, +1, tox, toy)
+		else if clever and ISREALNUM(this, nto)
+			@move_couldfit(nto, -1, fromx, fromy)
+		else
+			true
 
-FLAG_IMMUTABLE = 1
-FLAG_ERROR = 2
+	makelink: (from, to) ->
+		if @next[from] != -1
+			@prev[@next[from]] = -1
+		@next[from] = to
+		if @prev[to] != -1
+			@next[@prev[to]] = -1
+		@prev[to] = from
+		null
 
-# Generally useful functions
-
-ISREALNUM = (state, num) ->
-	num > 0 and num <= state.n
-
-
-
-
-
-# Taking the number 'num', work out the gap between it and the next
-# available number up or down (depending on d). Return 1 if the region
-# at (x,y) will fit in that gap, or 0 otherwise.
-move_couldfit = (state, num, d, x, y) ->
-	i = y*state.w+x
-	# The 'gap' is the number of missing numbers in the grid between
-	# our number and the next one in the sequence (up or down), or
-	# the end of the sequence (if we happen not to have 1/n present)
-	n = num + d
-	gap = 0
-	while ISREALNUM(state, n) and state.numsi[n] == -1
-		n += d
-		gap++
-	if gap == 0
-		# no gap, so the only allowable move is that that directly
-		# links the two numbers.
-		n = state.nums[i];
-		return not (n == num+d)
-	if state.prev[i] == -1 and state.next[i] == -1
-		return true # single unconnected square, always OK
-	sz = state.dsf.size(i)
-	return not (sz > gap)
-
-isvalidmove = (state, clever, fromx, fromy, tox, toy) ->
-	w = state.w
-	from = fromy*w+fromx
-	to = toy*w+tox
-	if not INGRID(state, fromx, fromy) or not INGRID(state, tox, toy)
-		return false
-	# can only move where we point
-	if not state.ispointing(fromx, fromy, tox, toy)
-		return false
-	nfrom = state.nums[from]
-	nto = state.nums[to]
-	# can't move _from_ the preset final number, or _to_ the preset 1.
-	if (((nfrom == state.n) and (state.flags[from] & FLAG_IMMUTABLE)) or ((nto   == 1) and (state.flags[to] & FLAG_IMMUTABLE)))
-		return false
-	# can't create a new connection between cells in the same region
-	# as that would create a loop.
-	if state.dsf.canonify(from) == state.dsf.canonify(to)
-		return false
-	# if both cells are actual numbers, can't drag if we're not
-	# one digit apart.
-	if ISREALNUM(state, nfrom) and ISREALNUM(state, nto)
-		if nfrom != nto-1
-			return false
-	else if clever and ISREALNUM(state, nfrom)
-		if not move_couldfit(state, nfrom, +1, tox, toy)
-			return false
-	else if clever and ISREALNUM(state, nto)
-		if not move_couldfit(state, nto, -1, fromx, fromy)
-			return false
-	return true
-
-makelink = (state, from, to) ->
-	if state.next[from] != -1
-		state.prev[state.next[from]] = -1
-	state.next[from] = to
-	if state.prev[to] != -1
-		state.next[state.prev[to]] = -1
-	state.prev[to] = from
-	null
-
-strip_nums = (state) ->
-	for i in [0 .. state.n - 1]
-		if not (state.flags[i] & FLAG_IMMUTABLE)
-			state.nums[i] = 0
-	memset(state.next, -1, state.n)
-	memset(state.prev, -1, state.n)
-	memset(state.numsi, -1, (state.n+1))
-	state.dsf.constructor(state.n)
-	null
+	strip_nums: ->
+		for i in [0 .. @n - 1]
+			if not (@flags[i] & FLAG_IMMUTABLE)
+				@nums[i] = 0
+		@next.fill(-1)
+		@prev.fill(-1)
+		@numsi.fill(-1)
+		@dsf.constructor(@n)
+		null
 
 # --- Game description string generation and unpicking ---
 
@@ -318,7 +307,7 @@ new_game_fill = (state, headi, taili) ->
 # this (such that it could solve it), or 0 if not.
 new_game_strip = (state) ->
 	copy = dup_game(state)
-	strip_nums(copy)
+	copy.strip_nums()
 	return true if solve_state(copy) > 0
 	scratch = [0 .. state.n - 1]
 	scratch.shuffle()
@@ -337,7 +326,7 @@ new_game_strip = (state) ->
 			copy.nums[j] = state.nums[j]
 			copy.flags[j] |= FLAG_IMMUTABLE
 			state.flags[j] |= FLAG_IMMUTABLE
-			strip_nums(copy)
+			copy.strip_nums()
 			if solve_state(copy) > 0
 				return true
 		return false
@@ -351,7 +340,7 @@ new_game_strip = (state) ->
 		if (state.flags[j] & FLAG_IMMUTABLE) and state.nums[j] != 1 and state.nums[j] != state.n
 			state.flags[j] &= ~FLAG_IMMUTABLE
 			dup_game_to(copy, state)
-			strip_nums(copy)
+			copy.strip_nums()
 			if not (solve_state(copy) > 0)
 				copy.nums[j] = state.nums[j]
 				state.flags[j] |= FLAG_IMMUTABLE
@@ -377,7 +366,7 @@ new_game_desc = (params) ->
 		# This will have filled in directions and _all_ numbers.
 		# Store the game definition for this, as the solved-state.
 		if new_game_strip(state)
-			strip_nums(state)
+			state.strip_nums()
 			return generate_desc(state, false)
 	throw 'Game generation failed.'
 
@@ -600,7 +589,7 @@ check_completion = (state, mark_errors) ->
 			# is nice if the user drags from 2 out (making 3) and a 4 is also
 			# visible; this ensures that the link from 3 to 4 is also made.
 			if mark_errors
-				makelink(state, state.numsi[n], state.numsi[n+1])
+				state.makelink(state.numsi[n], state.numsi[n+1])
 	# Search and mark numbers less than 0, or 0 with links.
 	for n in [1 .. state.n - 1]
 		if state.nums[n] < 0 or (state.nums[n] == 0 and (state.next[n] != -1 or state.prev[n] != -1))
@@ -639,8 +628,8 @@ solve_single = (state, copy) ->
 		while true
 			x += dxs[d]
 			y += dys[d]
-			break if not INGRID(state, x, y)
-			continue if not isvalidmove(state, 1, sx, sy, x, y)
+			break if not state.in_grid(x, y)
+			continue if not state.isvalidmove(1, sx, sy, x, y)
 			# can't link to somewhere with a back-link we would have to
 			# break (the solver just doesn't work like this).
 			j = y * w + x
@@ -661,7 +650,7 @@ solve_single = (state, copy) ->
 			copy.impossible = 1
 			return -1
 		else
-			makelink(copy, i, poss)
+			copy.makelink(i, poss)
 			nlinks++
 	for i in [0 .. state.n]
 		continue if state.prev[i] != -1
@@ -674,7 +663,7 @@ solve_single = (state, copy) ->
 		else if from[i] == -2
 			# Multiple prev squares
 		else
-			makelink(copy, from[i], i)
+			copy.makelink(from[i], i)
 			nlinks++
 	return nlinks
 
@@ -793,12 +782,12 @@ interpret_move = (state, ui, ds, mx, my, button) ->
 			if ui.sx == ui.cx and ui.sy == ui.cy
 				null
 			else if ui.drag_is_from
-				if not isvalidmove(state, 0, ui.sx, ui.sy, ui.cx, ui.cy)
+				if not state.isvalidmove(0, ui.sx, ui.sy, ui.cx, ui.cy)
 					null
 				else
 					['L', ui.sx, ui.sy, ui.cx, ui.cy]
 			else
-				if not isvalidmove(state, 0, ui.cx, ui.cy, ui.sx, ui.sy)
+				if not state.isvalidmove(0, ui.cx, ui.cy, ui.sx, ui.sy)
 					null
 				else
 					['L', ui.cx, ui.cy, ui.sx, ui.sy]
@@ -813,7 +802,7 @@ interpret_move = (state, ui, ds, mx, my, button) ->
 	else if IS_MOUSE_DOWN(button)
 		if ui.cshow
 			ui.cshow = ui.dragging = false
-		if not INGRID(state, x, y)
+		if not state.in_grid(x, y)
 			return null
 		if button == LEFT_BUTTON
 			# disallow dragging from the final number.
@@ -839,19 +828,19 @@ interpret_move = (state, ui, ds, mx, my, button) ->
 		ui.dragging = false
 		if ui.sx == x and ui.sy == y
 			null # single click
-		else if not INGRID(state, x, y)
+		else if not state.in_grid(x, y)
 			si = ui.sy*w+ui.sx
 			if state.prev[si] == -1 and state.next[si] == -1
 				null
 			else
 				[(if ui.drag_is_from then 'C' else 'X'), ui.sx, ui.sy]
 		else if ui.drag_is_from
-			if not isvalidmove(state, 0, ui.sx, ui.sy, x, y)
+			if not state.isvalidmove(0, ui.sx, ui.sy, x, y)
 				null
 			else
 				['L', ui.sx, ui.sy, x, y]
 		else
-			if not isvalidmove(state, 0, x, y, ui.sx, ui.sy)
+			if not state.isvalidmove(0, x, y, ui.sx, ui.sy)
 				null
 			else
 				['L', x, y, ui.sx, ui.sy]
@@ -890,15 +879,15 @@ execute_move = (state, move) ->
 		ret.used_solve = 1
 	else if move[0] == 'L'
 		[c, sx, sy, ex, ey] = move
-		if not isvalidmove(state, 0, sx, sy, ex, ey)
+		if not state.isvalidmove(0, sx, sy, ex, ey)
 			return null
 		ret = dup_game(state)
 		si = sy * w + sx
 		ei = ey * w + ex
-		makelink(ret, si, ei)
+		ret.makelink(si, ei)
 	else if move[0] == 'C' or move[0] == 'X'
 		[c, sx, sy] = move
-		if not INGRID(state, sx, sy)
+		if not state.in_grid(sx, sy)
 			return null
 		si = sy * w + sx
 		if state.prev[si] == -1 and state.next[si] == -1
