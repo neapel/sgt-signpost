@@ -118,6 +118,12 @@ class game_state
 	is_real_number: (num) ->
 		num > 0 and num <= @n
 
+	region_colour: (a) ->
+		0|(a / (@n + 1))
+
+	region_start: (c) ->
+		c * (@n + 1)
+
 	whichdiri: (fromi, toi) ->
 		whichdir(0|(fromi % @w), 0|(fromi / @w), 0|(toi % @w), 0|(toi / @w))
 
@@ -196,6 +202,15 @@ class game_state
 		if @prev[to] != -1
 			@next[@prev[to]] = -1
 		@prev[to] = from
+		null
+
+	unlink_cell: (si) ->
+		if @prev[si] != -1
+			@next[@prev[si]] = -1
+			@prev[si] = -1
+		if @next[si] != -1
+			@prev[@next[si]] = -1
+			@next[si] = -1
 		null
 
 	strip_nums: ->
@@ -344,6 +359,176 @@ class game_state
 					@flags[j] |= FLAG_IMMUTABLE
 		true
 
+	connect_numbers: ->
+		@dsf.constructor(@n)
+		for i in [0 .. @n - 1]
+			if @next[i] != -1
+				di = @dsf.canonify(i)
+				dni = @dsf.canonify(@next[i])
+				if di == dni
+					@impossible = 1
+				@dsf.merge(di, dni)
+		null
+
+	# Assuming numbers are always up-to-date, there are only four possibilities
+	# for regions changing after a single valid move:
+	# 
+	# 1) two differently-coloured regions being combined (the resulting colouring
+	#  should be based on the larger of the two regions)
+	# 2) a numbered region having a single number added to the start (the
+	#  region's colour will remain, and the numbers will shift by 1)
+	# 3) a numbered region having a single number added to the end (the
+	#  region's colour and numbering remains as-is)
+	# 4) two unnumbered squares being joined (will pick the smallest unused set
+	#  of colours to use for the new region).
+	# 
+	# There should never be any complications with regions containing 3 colours
+	# being combined, since two of those colours should have been merged on a
+	# previous move.
+	# 
+	# Most of the complications are in ensuring we don't accidentally set two
+	# regions with the same colour (e.g. if a region was split). If this happens
+	# we always try and give the largest original portion the original colour.
+
+	lowest_start: (heads) ->
+		# NB start at 1: colour 0 is real numbers
+		for c in [1 .. @n - 1]
+			used = false
+			for head in heads
+				if @region_colour(head.start) == c
+					used = true
+					break
+			return c if not used
+		return 0
+
+	update_numbers: ->
+		@numsi.fill(-1)
+		for i in [0 .. @n - 1]
+			if @flags[i] & FLAG_IMMUTABLE
+				@numsi[@nums[i]] = i
+			else if @prev[i] == -1 and @next[i] == -1
+				@nums[i] = 0
+		@connect_numbers()
+		# Construct an array of the heads of all current regions, together
+		# with their preferred colours.
+		heads = for i in [0 .. @n - 1] when not (@prev[i] != -1 or @next[i] == -1)
+			# Look for a cell that is the start of a chain
+			# (has a next but no prev).
+			new head_meta(this, i)
+		# Sort that array:
+		# - heads with preferred colours first, then
+		# - heads with low colours first, then
+		# - large regions first
+		heads.sort(compare_heads)
+		# Remove duplicate-coloured regions.
+		if heads.length > 0
+			for n in [heads.length - 1 .. 0] # order is important!
+				if n != 0 and heads[n].start == heads[n-1].start
+					# We have a duplicate-coloured region: since we're
+					# sorted in size order and this is not the first
+					# of its colour it's not the largest: recolour it.
+					heads[n].start = @region_start(@lowest_start(heads))
+					heads[n].preference = -1 # '-1' means 'was duplicate'
+				else if not heads[n].preference
+					heads[n].start = @region_start(@lowest_start(heads))
+		for head in heads
+			nnum = head.start
+			j = head.i
+			while j != -1
+				if not (@flags[j] & FLAG_IMMUTABLE)
+					if nnum > 0 and nnum <= @n
+						@numsi[nnum] = j
+					@nums[j] = nnum
+				nnum++
+				j = @next[j]
+		null
+
+	check_completion: (mark_errors) ->
+		error = false
+		# NB This only marks errors that are possible to perpetrate with
+		# the current UI in interpret_move. Things like forming loops in
+		# linked sections and having numbers not add up should be forbidden
+		# by the code elsewhere, so we don't bother marking those (because
+		# it would add lots of tricky drawing code for very little gain).
+		if mark_errors
+			for j in [0 .. @n - 1]
+				@flags[j] &= ~FLAG_ERROR
+		# Search for repeated numbers.
+		for j in [0 .. @n - 1]
+			if @nums[j] > 0 and @nums[j] <= @n
+				for k in [j + 1 .. @n - 1] by 1
+					if @nums[k] == @nums[j]
+						if mark_errors
+							@flags[j] |= FLAG_ERROR
+							@flags[k] |= FLAG_ERROR
+						error = true
+		# Search and mark numbers n not pointing to n+1; if any numbers
+		# are missing we know we've not completed.
+		complete = true
+		for n in [1 .. @n - 1]
+			if @numsi[n] == -1 or @numsi[n + 1] == -1
+				complete = false
+			else if not @ispointingi(@numsi[n], @numsi[n + 1])
+				if mark_errors
+					@flags[@numsi[n]] |= FLAG_ERROR
+					@flags[@numsi[n + 1]] |= FLAG_ERROR
+				error = true
+			else
+				# make sure the link is explicitly made here; for instance, this
+				# is nice if the user drags from 2 out (making 3) and a 4 is also
+				# visible; this ensures that the link from 3 to 4 is also made.
+				if mark_errors
+					@makelink(@numsi[n], @numsi[n+1])
+		# Search and mark numbers less than 0, or 0 with links.
+		for n in [1 .. @n - 1]
+			if @nums[n] < 0 or (@nums[n] == 0 and (@next[n] != -1 or @prev[n] != -1))
+				error = true
+				if mark_errors
+					@flags[n] |= FLAG_ERROR
+		return false if error
+		return complete
+
+
+	execute_move: (move) ->
+		new_state = do =>
+			if move[0] == 'L'
+				[c, sx, sy, ex, ey] = move
+				return null unless @isvalidmove(false, sx, sy, ex, ey)
+				ret = @clone()
+				ret.makelink(sy * @w + sx, ey * @w + ex)
+				return ret
+			else if move[0] == 'C' or move[0] == 'X'
+				[c, sx, sy] = move
+				if not @in_grid(sx, sy)
+					return null
+				si = sy * @w + sx
+				return null if @prev[si] == -1 and @next[si] == -1
+				if c == 'C'
+					# Unlink the single cell we dragged from the board.
+					ret = @clone()
+					ret.unlink_cell(si)
+					return ret
+				else
+					ret = @clone()
+					sset = @region_colour(@nums[si])
+					for i in [0 .. @n - 1]
+						# Unlink all cells in the same set as the one we dragged
+						# from the board.
+						if @nums[i] != 0 and sset == @region_colour(@nums[i])
+							ret.unlink_cell(i)
+					return ret
+			else if move[0] == 'H'
+				ret = @clone()
+				solve_state(ret)
+				return ret
+		if new_state
+			new_state.update_numbers()
+			if new_state.check_completion(true)
+				new_state.completed = true
+			return new_state
+		else
+			return null
+
 new_game_desc = (params) ->
 	state = new game_state(params.w, params.h)
 	for x in [0 .. 50]
@@ -368,38 +553,11 @@ new_game_desc = (params) ->
 			return generate_desc(state, false)
 	throw 'Game generation failed.'
 
-validate_desc = (params, desc) ->
-	try
-		unpick_desc(params, desc)
-		''
-	catch e
-		e
 
 # --- Linked-list and numbers array --- 
 
-# Assuming numbers are always up-to-date, there are only four possibilities
-# for regions changing after a single valid move:
-# 
-# 1) two differently-coloured regions being combined (the resulting colouring
-#  should be based on the larger of the two regions)
-# 2) a numbered region having a single number added to the start (the
-#  region's colour will remain, and the numbers will shift by 1)
-# 3) a numbered region having a single number added to the end (the
-#  region's colour and numbering remains as-is)
-# 4) two unnumbered squares being joined (will pick the smallest unused set
-#  of colours to use for the new region).
-# 
-# There should never be any complications with regions containing 3 colours
-# being combined, since two of those colours should have been merged on a
-# previous move.
-# 
-# Most of the complications are in ensuring we don't accidentally set two
-# regions with the same colour (e.g. if a region was split). If this happens
-# we always try and give the largest original portion the original colour.
 
 
-COLOUR = (state, a) -> 0|(a / (state.n + 1))
-START = (state, c) -> c * (state.n + 1)
 
 class head_meta
 	constructor: (state, i) ->
@@ -427,7 +585,7 @@ class head_meta
 		if state.nums[i] == 0 and state.nums[state.next[i]] > state.n
 			# (probably) empty cell onto the head of a coloured region:
 			# make sure we start at a 0 offset.
-			@start = START(state, COLOUR(state, state.nums[state.next[i]]))
+			@start = state.region_start(state.region_colour(state.nums[state.next[i]]))
 			@preference = 1
 			@why = 'adding blank cell to head of numbered region'
 		else if state.nums[i] <= state.n
@@ -439,27 +597,27 @@ class head_meta
 			@preference = 0
 			@why = 'lowest available colour group'
 		else
-			c = COLOUR(state, state.nums[i])
+			c = state.region_colour(state.nums[i])
 			n = 1
 			sz = state.dsf.size(i)
 			j = i
 			while state.next[j] != -1
 				j = state.next[j]
 				if state.nums[j] == 0 and state.next[j] == -1
-					@start = START(state, c)
+					@start = state.region_start(c)
 					@preference = 1
 					@why = 'adding blank cell to end of numbered region'
 					return
-				if COLOUR(state, state.nums[j]) == c
+				if state.region_colour(state.nums[j]) == c
 					n++
 				else
-					start_alternate = START(state, COLOUR(state, state.nums[j]))
+					start_alternate = state.region_start(state.region_colour(state.nums[j]))
 					if n < (sz - n)
 						@start = start_alternate
 						@preference = 1
 						@why = 'joining two coloured regions, swapping to larger colour'
 					else
-						@start = START(state, c)
+						@start = state.region_start(c)
 						@preference = 1
 						@why = 'joining two coloured regions, taking largest'
 					return
@@ -469,20 +627,9 @@ class head_meta
 				@start = 0
 				@preference = 0
 			else
-				@start = START(state, c)
+				@start = state.region_start(c)
 				@preference = 1
 			@why = 'got to end of coloured region'
-
-connect_numbers = (state) ->
-	state.dsf.constructor(state.n)
-	for i in [0 .. state.n - 1]
-		if state.next[i] != -1
-			di = state.dsf.canonify(i)
-			dni = state.dsf.canonify(state.next[i])
-			if di == dni
-				state.impossible = 1
-			state.dsf.merge(di, dni)
-	null
 
 compare_heads = (ha, hb) ->
 	# Heads with preferred colours first...
@@ -499,108 +646,10 @@ compare_heads = (ha, hb) ->
 	return 1 if ha.i < hb.i
 	return 0
 
-lowest_start = (state, heads) ->
-	# NB start at 1: colour 0 is real numbers
-	for c in [1 .. state.n - 1]
-		used = false
-		for head in heads
-			if COLOUR(state, head.start) == c
-				used = true
-				break
-		return c if not used
-	return 0
-
-update_numbers = (state) ->
-	state.numsi.fill(-1)
-	for i in [0 .. state.n - 1]
-		if state.flags[i] & FLAG_IMMUTABLE
-			state.numsi[state.nums[i]] = i
-		else if state.prev[i] == -1 and state.next[i] == -1
-			state.nums[i] = 0
-	connect_numbers(state)
-	# Construct an array of the heads of all current regions, together
-	# with their preferred colours.
-	heads = for i in [0 .. state.n - 1] when not (state.prev[i] != -1 or state.next[i] == -1)
-		# Look for a cell that is the start of a chain
-		# (has a next but no prev).
-		new head_meta(state, i)
-	# Sort that array:
-	# - heads with preferred colours first, then
-	# - heads with low colours first, then
-	# - large regions first
-	heads.sort(compare_heads)
-	# Remove duplicate-coloured regions.
-	if heads.length > 0
-		for n in [heads.length - 1 .. 0] # order is important!
-			if n != 0 and heads[n].start == heads[n-1].start
-				# We have a duplicate-coloured region: since we're
-				# sorted in size order and this is not the first
-				# of its colour it's not the largest: recolour it.
-				heads[n].start = START(state, lowest_start(state, heads))
-				heads[n].preference = -1 # '-1' means 'was duplicate'
-			else if not heads[n].preference
-				heads[n].start = START(state, lowest_start(state, heads))
-	for head in heads
-		nnum = head.start
-		j = head.i
-		while j != -1
-			if not (state.flags[j] & FLAG_IMMUTABLE)
-				if nnum > 0 and nnum <= state.n
-					state.numsi[nnum] = j
-				state.nums[j] = nnum
-			nnum++
-			j = state.next[j]
-	null
-
-check_completion = (state, mark_errors) ->
-	error = false
-	# NB This only marks errors that are possible to perpetrate with
-	# the current UI in interpret_move. Things like forming loops in
-	# linked sections and having numbers not add up should be forbidden
-	# by the code elsewhere, so we don't bother marking those (because
-	# it would add lots of tricky drawing code for very little gain).
-	if mark_errors
-		for j in [0 .. state.n - 1]
-			state.flags[j] &= ~FLAG_ERROR
-	# Search for repeated numbers.
-	for j in [0 .. state.n - 1]
-		if state.nums[j] > 0 and state.nums[j] <= state.n
-			for k in [j + 1 .. state.n - 1] by 1
-				if state.nums[k] == state.nums[j]
-					if mark_errors
-						state.flags[j] |= FLAG_ERROR
-						state.flags[k] |= FLAG_ERROR
-					error = true
-	# Search and mark numbers n not pointing to n+1; if any numbers
-	# are missing we know we've not completed.
-	complete = true
-	for n in [1 .. state.n - 1]
-		if state.numsi[n] == -1 or state.numsi[n + 1] == -1
-			complete = false
-		else if not state.ispointingi(state.numsi[n], state.numsi[n + 1])
-			if mark_errors
-				state.flags[state.numsi[n]] |= FLAG_ERROR
-				state.flags[state.numsi[n + 1]] |= FLAG_ERROR
-			error = true
-		else
-			# make sure the link is explicitly made here; for instance, this
-			# is nice if the user drags from 2 out (making 3) and a 4 is also
-			# visible; this ensures that the link from 3 to 4 is also made.
-			if mark_errors
-				state.makelink(state.numsi[n], state.numsi[n+1])
-	# Search and mark numbers less than 0, or 0 with links.
-	for n in [1 .. state.n - 1]
-		if state.nums[n] < 0 or (state.nums[n] == 0 and (state.next[n] != -1 or state.prev[n] != -1))
-			error = true
-			if mark_errors
-				state.flags[n] |= FLAG_ERROR
-	return false if error
-	return complete
-
 new_game = (params, desc) ->
 	state = unpick_desc(params, desc)
-	update_numbers(state)
-	check_completion(state, true) # update any auto-links
+	state.update_numbers()
+	state.check_completion(true) # update any auto-links
 	state
 
 # --- Solver ---
@@ -669,18 +718,18 @@ solve_single = (state, copy) ->
 solve_state = (state) ->
 	copy = state.clone()
 	while true
-		update_numbers(state)
+		state.update_numbers()
 		if solve_single(state, copy)
 			dup_game_to(state, copy)
 			if state.impossible
 				break
 		else
 			break
-	update_numbers(state)
+	state.update_numbers()
 	if state.impossible
 		-1
 	else
-		if check_completion(state, false) then 1 else 0
+		if state.check_completion(false) then 1 else 0
 
 solve_game = (state, currstate) ->
 	tosolve = currstate.clone()
@@ -733,6 +782,7 @@ class game_ui
 		@sx = @sy = 0 # grid coords of start cell
 		@dx = @dy = 0 # grid coords of drag posn
 		@drag_is_from = false
+
 	clone: ->
 		g = new game_ui()
 		g.cx = @cx
@@ -746,172 +796,109 @@ class game_ui
 		g.drag_is_from = @drag_is_from
 		g
 
-
-
-game_changed_state = (ui, oldstate, newstate) ->
-	if not oldstate.completed and newstate.completed
-		ui.cshow = ui.dragging = 0
-	null
-
-interpret_move = (state, ui, ds, mx, my, button) ->
-	x = ds.FROMCOORD(mx)
-	y = ds.FROMCOORD(my)
-	w = state.w
-	if IS_CURSOR_MOVE(button)
-		switch button
-			when CURSOR_UP
-				ui.cy = (ui.cy - 1 + state.h) % state.h
-			when CURSOR_DOWN
-				ui.cy = (ui.cy + 1) % state.h
-			when CURSOR_LEFT
-				ui.cx = (ui.cx - 1 + state.h) % state.h
-			when CURSOR_RIGHT
-				ui.cx = (ui.cx + 1) % state.h
-		ui.cshow = true
-		if ui.dragging
-			ui.dx = ds.COORD(ui.cx) + ds.tilesize/2
-			ui.dy = ds.COORD(ui.cy) + ds.tilesize/2
+	game_changed_state: (oldstate, newstate) ->
+		if not oldstate.completed and newstate.completed
+			@cshow = @dragging = 0
 		null
-	else if IS_CURSOR_SELECT(button)
-		if not ui.cshow
-			ui.cshow = true
-		if ui.dragging
-			ui.dragging = false
-			if ui.sx == ui.cx and ui.sy == ui.cy
-				null
-			else if ui.drag_is_from
-				if not state.isvalidmove(false, ui.sx, ui.sy, ui.cx, ui.cy)
-					null
-				else
-					['L', ui.sx, ui.sy, ui.cx, ui.cy]
-			else
-				if not state.isvalidmove(false, ui.cx, ui.cy, ui.sx, ui.sy)
-					null
-				else
-					['L', ui.cx, ui.cy, ui.sx, ui.sy]
-		else
-			ui.dragging = true
-			ui.sx = ui.cx
-			ui.sy = ui.cy
-			ui.dx = ds.COORD(ui.cx) + ds.tilesize/2
-			ui.dy = ds.COORD(ui.cy) + ds.tilesize/2
-			ui.drag_is_from = (button == CURSOR_SELECT)
+
+	# returns a move object to be passed to state.execute_move()
+	interpret_move: (state, ds, mx, my, button) ->
+		x = ds.FROMCOORD(mx)
+		y = ds.FROMCOORD(my)
+		w = state.w
+		if IS_CURSOR_MOVE(button)
+			switch button
+				when CURSOR_UP
+					@cy = (@cy - 1 + state.h) % state.h
+				when CURSOR_DOWN
+					@cy = (@cy + 1) % state.h
+				when CURSOR_LEFT
+					@cx = (@cx - 1 + state.w) % state.w
+				when CURSOR_RIGHT
+					@cx = (@cx + 1) % state.w
+			@cshow = true
+			if @dragging
+				@dx = ds.COORD(@cx) + ds.tilesize/2
+				@dy = ds.COORD(@cy) + ds.tilesize/2
 			null
-	else if IS_MOUSE_DOWN(button)
-		if ui.cshow
-			ui.cshow = ui.dragging = false
-		if not state.in_grid(x, y)
-			return null
-		if button == LEFT_BUTTON
-			# disallow dragging from the final number.
-			if (state.nums[y*w+x] == state.n) and (state.flags[y*w+x] & FLAG_IMMUTABLE)
+		else if IS_CURSOR_SELECT(button)
+			if not @cshow
+				@cshow = true
+			if @dragging
+				@dragging = false
+				if @sx == @cx and @sy == @cy
+					null
+				else if @drag_is_from
+					if not state.isvalidmove(false, @sx, @sy, @cx, @cy)
+						null
+					else
+						['L', @sx, @sy, @cx, @cy]
+				else
+					if not state.isvalidmove(false, @cx, @cy, @sx, @sy)
+						null
+					else
+						['L', @cx, @cy, @sx, @sy]
+			else
+				@dragging = true
+				@sx = @cx
+				@sy = @cy
+				@dx = ds.COORD(@cx) + ds.tilesize/2
+				@dy = ds.COORD(@cy) + ds.tilesize/2
+				@drag_is_from = (button == CURSOR_SELECT)
+				null
+		else if IS_MOUSE_DOWN(button)
+			if @cshow
+				@cshow = @dragging = false
+			if not state.in_grid(x, y)
 				return null
-		else if button == RIGHT_BUTTON
-			# disallow dragging to the first number.
-			if (state.nums[y*w+x] == 1) and (state.flags[y*w+x] & FLAG_IMMUTABLE)
-				return null
-		ui.dragging = true
-		ui.drag_is_from = (button == LEFT_BUTTON)
-		ui.sx = x
-		ui.sy = y
-		ui.dx = mx
-		ui.dy = my
-		ui.cshow = false
-		null
-	else if IS_MOUSE_DRAG(button) and ui.dragging
-		ui.dx = mx
-		ui.dy = my
-		null
-	else if IS_MOUSE_RELEASE(button) and ui.dragging
-		ui.dragging = false
-		if ui.sx == x and ui.sy == y
-			null # single click
-		else if not state.in_grid(x, y)
-			si = ui.sy*w+ui.sx
+			if button == LEFT_BUTTON
+				# disallow dragging from the final number.
+				if (state.nums[y*w+x] == state.n) and (state.flags[y*w+x] & FLAG_IMMUTABLE)
+					return null
+			else if button == RIGHT_BUTTON
+				# disallow dragging to the first number.
+				if (state.nums[y*w+x] == 1) and (state.flags[y*w+x] & FLAG_IMMUTABLE)
+					return null
+			@dragging = true
+			@drag_is_from = (button == LEFT_BUTTON)
+			@sx = x
+			@sy = y
+			@dx = mx
+			@dy = my
+			@cshow = false
+			null
+		else if IS_MOUSE_DRAG(button) and @dragging
+			@dx = mx
+			@dy = my
+			null
+		else if IS_MOUSE_RELEASE(button) and @dragging
+			@dragging = false
+			if @sx == x and @sy == y
+				null # single click
+			else if not state.in_grid(x, y)
+				si = @sy * w + @sx
+				if state.prev[si] == -1 and state.next[si] == -1
+					null
+				else
+					[(if @drag_is_from then 'C' else 'X'), @sx, @sy]
+			else if @drag_is_from
+				if not state.isvalidmove(false, @sx, @sy, x, y)
+					null
+				else
+					['L', @sx, @sy, x, y]
+			else
+				if not state.isvalidmove(false, x, y, @sx, @sy)
+					null
+				else
+					['L', x, y, @sx, @sy]
+		else if (button == 'x' or button == 'X') and @cshow
+			si = @cy * w + @cx
 			if state.prev[si] == -1 and state.next[si] == -1
 				null
 			else
-				[(if ui.drag_is_from then 'C' else 'X'), ui.sx, ui.sy]
-		else if ui.drag_is_from
-			if not state.isvalidmove(false, ui.sx, ui.sy, x, y)
-				null
-			else
-				['L', ui.sx, ui.sy, x, y]
+				[(if button == 'x' then 'C' else 'X'), @cx, @cy]
 		else
-			if not state.isvalidmove(false, x, y, ui.sx, ui.sy)
-				null
-			else
-				['L', x, y, ui.sx, ui.sy]
-	else if (button == 'x' or button == 'X') and ui.cshow
-		si = ui.cy * w + ui.cx
-		if state.prev[si] == -1 and state.next[si] == -1
 			null
-		else
-			[(if button == 'x' then 'C' else 'X'), ui.cx, ui.cy]
-	else
-		null
-
-unlink_cell = (state, si) ->
-	if state.prev[si] != -1
-		state.next[state.prev[si]] = -1
-		state.prev[si] = -1
-	if state.next[si] != -1
-		state.prev[state.next[si]] = -1
-		state.next[si] = -1
-	null
-
-execute_move = (state, move) ->
-	ret = null
-	w = state.w
-	if move[0] == 'S'
-		p = new gamestate()
-		p.w = state.w
-		p.h = state.h
-		if validate_desc(p, move.substring(1))
-			return null
-		ret = state.clone()
-		tmp = new_game(p, move.substring(1))
-		for i in [0 .. state.n - 1]
-			ret.prev[i] = tmp.prev[i]
-			ret.next[i] = tmp.next[i]
-		ret.used_solve = 1
-	else if move[0] == 'L'
-		[c, sx, sy, ex, ey] = move
-		if not state.isvalidmove(false, sx, sy, ex, ey)
-			return null
-		ret = state.clone()
-		si = sy * w + sx
-		ei = ey * w + ex
-		ret.makelink(si, ei)
-	else if move[0] == 'C' or move[0] == 'X'
-		[c, sx, sy] = move
-		if not state.in_grid(sx, sy)
-			return null
-		si = sy * w + sx
-		if state.prev[si] == -1 and state.next[si] == -1
-			return null
-		ret = state.clone()
-		if c == 'C'
-			# Unlink the single cell we dragged from the board.
-			unlink_cell(ret, si)
-		else
-			sset = 0|(state.nums[si] / (state.n+1))
-			for i in [0 .. state.n - 1]
-				# Unlink all cells in the same set as the one we dragged
-				# from the board.
-				continue if state.nums[i] == 0
-				set = 0|(state.nums[i] / (state.n+1))
-				continue if set != sset
-				unlink_cell(ret, i)
-	else if move[0] == 'H'
-		ret = state.clone()
-		solve_state(ret)
-	# done
-	if ret
-		update_numbers(ret)
-		if check_completion(ret, true)
-			ret.completed = true
-	return ret
 
 
 ############## Drawing #################
@@ -1184,9 +1171,9 @@ game_redraw = (dr, ds, state, ui) ->
 	# as not to stomp on the real UI's drag state.
 	if ui.dragging
 		uicopy = ui.clone()
-		movestr = interpret_move(state, uicopy, ds, ui.dx, ui.dy, LEFT_RELEASE)
+		movestr = uicopy.interpret_move(state, ds, ui.dx, ui.dy, LEFT_RELEASE)
 		if movestr
-			state = postdrop = execute_move(state, movestr)
+			state = postdrop = state.execute_move(movestr)
 	if not ds.started
 		aw = ds.tilesize * state.w
 		ah = ds.tilesize * state.h
@@ -1251,9 +1238,9 @@ window.onload = ->
 	game_redraw(ctx, ds, state[0], ui)
 
 	make_move = (button, x, y) ->
-		mov = interpret_move(state[0], ui, ds, x, y, button)
+		mov = ui.interpret_move(state[0], ds, x, y, button)
 		if mov
-			new_state = execute_move(state[0], mov)
+			new_state = state[0].execute_move(mov)
 			state.unshift(new_state)
 		game_redraw(ctx, ds, state[0], ui)
 
@@ -1279,7 +1266,7 @@ window.onload = ->
 				make_move(CURSOR_SELECT2)
 				event.preventDefault()
 			when 85 # u: undo
-				if state.length > 0
+				if state.length > 1
 					state.shift()
 					game_redraw(ctx, ds, state[0], ui)
 					event.preventDefault()
