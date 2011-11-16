@@ -369,7 +369,6 @@ new_game_desc = (params) ->
 					taili = Math.random_int(state.n)
 					break unless headi == taili
 			break if new_game_fill(state, headi, taili)
-			console.log 'new game fill, again'
 		state.flags[headi] |= FLAG_IMMUTABLE
 		state.flags[taili] |= FLAG_IMMUTABLE
 		# This will have filled in directions and _all_ numbers.
@@ -657,7 +656,6 @@ solve_single = (state, copy) ->
 			# Multiple next squares
 		else if poss == -1
 			copy.impossible = 1
-			console.log 'impossible 1'
 			return -1
 		else
 			makelink(copy, i, poss)
@@ -669,14 +667,12 @@ solve_single = (state, copy) ->
 		y = 0|(i / w)
 		if from[i] == -1
 			copy.impossible = 1
-			console.log 'impossible 2'
 			return -1
 		else if from[i] == -2
 			# Multiple prev squares
 		else
 			makelink(copy, from[i], i)
 			nlinks++
-	console.log 'solved', nlinks
 	return nlinks
 
 # Returns 1 if we managed to solve it, 0 otherwise.
@@ -687,7 +683,6 @@ solve_state = (state) ->
 		if solve_single(state, copy)
 			dup_game_to(state, copy)
 			if state.impossible
-				console.log 'solve_state impossible'
 				break
 		else
 			break
@@ -753,7 +748,7 @@ class game_ui
 		g.cx = @cx
 		g.cy = @cy
 		g.cshow = @cshow
-		g.draggin = @dragging
+		g.dragging = @dragging
 		g.sx = @sx
 		g.sy = @sy
 		g.dx = @dx
@@ -825,7 +820,7 @@ interpret_move = (state, ui, ds, mx, my, button) ->
 			# disallow dragging to the first number.
 			if (state.nums[y*w+x] == 1) and (state.flags[y*w+x] & FLAG_IMMUTABLE)
 				return null
-		ui.dragging = truie
+		ui.dragging = true
 		ui.drag_is_from = (button == LEFT_BUTTON)
 		ui.sx = x
 		ui.sy = y
@@ -940,7 +935,7 @@ COL_ARROW = '#000000'
 COL_NUMBER_SET = '#0000ff'
 COL_NUMBER = '#000000'
 COL_CURSOR = '#000'
-COL_DRAG_ORIGIN = 'yellow'
+COL_DRAG_ORIGIN = 'blue'
 COL_ERROR = 'red'
 
 class drawstate
@@ -962,7 +957,7 @@ class drawstate
 		x * @tilesize + @border
 
 	FROMCOORD: (x) ->
-		(x - @border + @tilesize) / @tilesize - 1
+		0|((x - @border + @tilesize) / @tilesize) - 1
 
 
 draw_rect = (dr, x, y, w, h, color) ->
@@ -1017,8 +1012,8 @@ dim = (a, b) ->
 	Color(a).blend(Color(b), 0.5).toCSS()
 mid = (a, b) ->
 	dim(a, b)
-dimbg = (a, b) ->
-	dim(a, b)
+dimbg = (a) ->
+	dim(a, COL_BACKGROUND)
 
 # cx, cy are top-left corner. sz is the 'radius' of the arrow.
 # ang is in radians, clockwise from 0 == straight up.
@@ -1137,7 +1132,6 @@ tile_redraw = (dr, ds, tx, ty, dir, dirp, num, f) ->
 			buf = "#{num}"
 		else
 			while set > 0
-				console.log set
 				set--
 				buf += ALPHABET[0|(set % ALPHABET.length)]
 				set = 0|(set / 26)
@@ -1147,7 +1141,6 @@ tile_redraw = (dr, ds, tx, ty, dir, dirp, num, f) ->
 		dr.save()
 		dr.font = "#{ds.tilesize/3}px sans-serif"
 		dr.fillStyle = textcol
-		console.log dr.fillStyle, textcol
 		dr.fillText(buf, tx + cb, ty + ds.tilesize * 0.4)
 		dr.restore()
 	draw_rect_outline(dr, tx, ty, ds.tilesize, ds.tilesize, COL_GRID)
@@ -1161,7 +1154,7 @@ draw_drag_indicator = (dr, ds, state, ui, validdrag) ->
 	if validdrag
 		# If we could move here, lock the arrow to the appropriate direction.
 		dir = if ui.drag_is_from then state.dirs[ui.sy*w+ui.sx] else state.dirs[fy*w+fx]
-		ang = (2.0 * PI * dir) / 8.0 # similar to calculation in draw_arrow_dir.
+		ang = (2.0 * Math.PI * dir) / 8.0 # similar to calculation in draw_arrow_dir.
 	else
 		# Draw an arrow pointing away from/towards the origin cell.
 		ox = ds.COORD(ui.sx) + ds.tilesize/2
@@ -1202,6 +1195,7 @@ game_redraw = (dr, ds, state, ui) ->
 	if ui.dragging
 		uicopy = ui.clone()
 		movestr = interpret_move(state, uicopy, ds, ui.dx, ui.dy, LEFT_RELEASE)
+		console.log 'next', movestr, uicopy, ui.dx, ui.dy
 		if movestr
 			state = postdrop = execute_move(state, movestr)
 	if not ds.started
@@ -1253,12 +1247,9 @@ game_redraw = (dr, ds, state, ui) ->
 
 
 window.onload = ->
-	console.log 'init'
 	params = new game_params(6, 6, true)
 	desc = new_game_desc(params)
-	console.log 'got desc', desc
 	state = [unpick_desc(params, desc)]
-	console.log 'state', state
 	ui = new game_ui()
 	ds = new drawstate(state[0])
 
@@ -1273,44 +1264,74 @@ window.onload = ->
 	make_move = (button, x, y) ->
 		mov = interpret_move(state[0], ui, ds, x, y, button)
 		if mov
-			console.log 'executing move', mov
 			new_state = execute_move(state[0], mov)
 			state.unshift(new_state)
-			console.log 'states', state
 		game_redraw(ctx, ds, state[0], ui)
 
 
 	window.onkeydown = (event) ->
 		switch event.keyCode
-			when 37, 65 # left, a
+			when 37, 65 # left, a: move cursor
 				make_move(CURSOR_LEFT)
-			when 38, 87 # up, w
+				event.preventDefault()
+			when 38, 87 # up, w: move cursor
 				make_move(CURSOR_UP)
-			when 39, 68 # right, d
+				event.preventDefault()
+			when 39, 68 # right, d: move cursor
 				make_move(CURSOR_RIGHT)
-			when 40, 83 # down, s
+				event.preventDefault()
+			when 40, 83 # down, s: move cursor
 				make_move(CURSOR_DOWN)
-			when 32 # space
+				event.preventDefault()
+			when 32 # space: forward select
 				make_move(CURSOR_SELECT)
-			when 13 # enter
+				event.preventDefault()
+			when 13 # enter: reverse select
 				make_move(CURSOR_SELECT2)
-			when 85 # u
+				event.preventDefault()
+			when 85 # u: undo
 				if state.length > 0
 					state.shift()
 					game_redraw(ctx, ds, state[0], ui)
+					event.preventDefault()
 
-		console.log event.key, event.keyCode, event
-	#	interpret_move(state, ui, ds, null, null, )
-	#interpret_move = (state, ui, ds, mx, my, button)
+	mouse_is_down = false
+	canvas.onmousedown = (event) ->
+		mouse_is_down = true
+		event.preventDefault()
+		x = event.clientX
+		y = event.clientY
+		switch event.button
+			when 0
+				make_move(LEFT_BUTTON, x, y)
+			when 1
+				make_move(MIDDLE_BUTTON, x, y)
+			when 2
+				make_move(RIGHT_BUTTON, x, y)
+		
+	canvas.onmouseup = (event) ->
+		mouse_is_down = false
+		event.preventDefault()
+		x = event.clientX
+		y = event.clientY
+		switch event.button
+			when 0
+				make_move(LEFT_RELEASE, x, y)
+			when 1
+				make_move(MIDDLE_RELEASE, x, y)
+			when 2
+				make_move(RIGHT_RELEASE, x, y)
 
-LEFT_BUTTON = 1
-MIDDLE_BUTTON = 2
-RIGHT_BUTTON = 3
-LEFT_DRAG = 4
-MIDDLE_DRAG = 5
-RIGHT_DRAG = 6
-LEFT_RELEASE = 7
-MIDDLE_RELEASE = 8
-RIGHT_RELEASE = 9
-CURSOR_SELECT = 14
-CURSOR_SELECT2 = 15
+	canvas.onmousemove = (event) ->
+		if mouse_is_down
+			event.preventDefault()
+			x = event.clientX
+			y = event.clientY
+			switch event.button
+				when 0
+					make_move(LEFT_DRAG, x, y)
+				when 1
+					make_move(MIDDLE_DRAG, x, y)
+				when 2
+					make_move(RIGHT_DRAG, x, y)
+
