@@ -231,120 +231,118 @@ class game_state
 					adjacent.push [newi, a]
 		adjacent
 
-new_game_fill = (state, headi, taili) ->
-	memset(state.nums, 0, state.n)
-	state.nums[headi] = 1
-	state.nums[taili] = state.n
-	state.dirs[taili] = 0
-	nfilled = 2
-	while nfilled < state.n
-		# Try and expand _from_ headi; keep going if there's only one
-		# place to go to.
-		adj = state.cell_adj(headi)
-		while true
-			return false if adj.length == 0
-			[aidx, adir] = adj[Math.random_int(adj.length)]
-			state.dirs[headi] = adir
-			state.nums[aidx] = state.nums[headi] + 1
-			nfilled++
-			headi = aidx
-			adj = state.cell_adj(headi)
-			break unless adj.length == 1
-		# Try and expand _to_ taili; keep going if there's only one
-		# place to go to.
-		adj = state.cell_adj(taili)
-		while true
-			return false if adj.length == 0
-			[aidx, adir] = adj[Math.random_int(adj.length)]
-			state.dirs[aidx] = DIR_OPPOSITE(adir)
-			state.nums[aidx] = state.nums[taili] - 1
-			nfilled++
-			taili = aidx
-			adj = state.cell_adj(taili)
-			break unless adj.length == 1
-	# If we get here we have headi and taili set but unconnected
-	# by direction: we need to set headi's direction so as to point
-	# at taili.
-	state.dirs[headi] = state.whichdiri(headi, taili)
-	# it could happen that our last two weren't in line; if that's the
-	# case, we have to start again.
-	state.dirs[headi] != -1
+	new_game_fill: (headi, taili) ->
+		@nums.fill(0)
+		@nums[headi] = 1
+		@nums[taili] = @n
+		@dirs[taili] = 0
+		nfilled = 2
+		while nfilled < @n
+			# Try and expand _from_ headi; keep going if there's only one
+			# place to go to.
+			adj = @cell_adj(headi)
+			while true
+				return false if adj.length == 0
+				[aidx, adir] = adj[Math.random_int(adj.length)]
+				@dirs[headi] = adir
+				@nums[aidx] = @nums[headi] + 1
+				nfilled++
+				headi = aidx
+				adj = @cell_adj(headi)
+				break unless adj.length == 1
+			# Try and expand _to_ taili; keep going if there's only one
+			# place to go to.
+			adj = @cell_adj(taili)
+			while true
+				return false if adj.length == 0
+				[aidx, adir] = adj[Math.random_int(adj.length)]
+				@dirs[aidx] = DIR_OPPOSITE(adir)
+				@nums[aidx] = @nums[taili] - 1
+				nfilled++
+				taili = aidx
+				adj = @cell_adj(taili)
+				break unless adj.length == 1
+		# If we get here we have headi and taili set but unconnected
+		# by direction: we need to set headi's direction so as to point
+		# at taili.
+		@dirs[headi] = @whichdiri(headi, taili)
+		# it could happen that our last two weren't in line; if that's the
+		# case, we have to start again.
+		@dirs[headi] != -1
 
-# Better generator: with the 'generate, sprinkle numbers, solve,
-# repeat' algorithm we're _never_ generating anything greater than
-# 6x6, and spending all of our time in new_game_fill (and very little
-# in solve_state).
-#
-# So, new generator steps:
-# generate the grid, at random (same as now). Numbers 1 and N get
-# immutable flag immediately.
-# squirrel that away for the solved state.
-#
-# (solve:) Try and solve it.
-#   If we solved it, we're done:
-#     generate the description from current immutable numbers,
-#     free stuff that needs freeing,
-#     return description + solved state.
-#   If we didn't solve it:
-#     count #tiles in state we've made deductions about.
-#     while (1):
-#       randomise a scratch array.
-#         for each index in scratch (in turn):
-#           if the cell isn't empty, continue (through scratch array)
-#           set number + immutable in state.
-#           try and solve state.
-#           if we've solved it, we're done.
-#           otherwise, count #tiles. If it's more than we had before:
-#             good, break from this loop and re-randomise.
-#           otherwise (number didn't help):
-#             remove number and try next in scratch array.
-#             if we've got to the end of the scratch array, no luck:
-#               free everything we need to, and go back to regenerate the grid.
+	# Better generator: with the 'generate, sprinkle numbers, solve,
+	# repeat' algorithm we're _never_ generating anything greater than
+	# 6x6, and spending all of our time in new_game_fill (and very little
+	# in solve_state).
+	#
+	# So, new generator steps:
+	# generate the grid, at random (same as now). Numbers 1 and N get
+	# immutable flag immediately.
+	# squirrel that away for the solved state.
+	#
+	# (solve:) Try and solve it.
+	#   If we solved it, we're done:
+	#     generate the description from current immutable numbers,
+	#     free stuff that needs freeing,
+	#     return description + solved state.
+	#   If we didn't solve it:
+	#     count #tiles in state we've made deductions about.
+	#     while (1):
+	#       randomise a scratch array.
+	#         for each index in scratch (in turn):
+	#           if the cell isn't empty, continue (through scratch array)
+	#           set number + immutable in state.
+	#           try and solve state.
+	#           if we've solved it, we're done.
+	#           otherwise, count #tiles. If it's more than we had before:
+	#             good, break from this loop and re-randomise.
+	#           otherwise (number didn't help):
+	#             remove number and try next in scratch array.
+	#             if we've got to the end of the scratch array, no luck:
+	#               free everything we need to, and go back to regenerate the grid.
 
-# Expects a fully-numbered game_state on input, and makes sure
-# FLAG_IMMUTABLE is only set on those numbers we need to solve
-# (as for a real new-game); returns 1 if it managed
-# this (such that it could solve it), or 0 if not.
-new_game_strip = (state) ->
-	copy = state.clone()
-	copy.strip_nums()
-	return true if solve_state(copy) > 0
-	scratch = [0 .. state.n - 1]
-	scratch.shuffle()
-	solved = do ->
-		# This is scungy. It might just be quick enough.
-		# It goes through, adding set numbers in empty squares
-		# until either we run out of empty squares (in the one
-		# we're half-solving) or else we solve it properly.
-		# NB that we run the entire solver each time, which
-		# strips the grid beforehand; we will save time if we
-		# avoid that.
-		for i in [0 .. state.n]
-			j = scratch[i]
-			if copy.nums[j] > 0 and copy.nums[j] <= state.n
-				continue # already solved to a real number here.
-			copy.nums[j] = state.nums[j]
-			copy.flags[j] |= FLAG_IMMUTABLE
-			state.flags[j] |= FLAG_IMMUTABLE
-			copy.strip_nums()
-			if solve_state(copy) > 0
-				return true
-		return false
-	return false if not solved
-	# Since we added basically at random, try now to remove numbers
-	# and see if we can still solve it; if we can (still), really
-	# remove the number. Make sure we don't remove the anchor numbers
-	# 1 and N.
-	for i in [0 .. state.n - 1]
-		j = scratch[i]
-		if (state.flags[j] & FLAG_IMMUTABLE) and state.nums[j] != 1 and state.nums[j] != state.n
-			state.flags[j] &= ~FLAG_IMMUTABLE
-			copy = state.clone()
-			copy.strip_nums()
-			if not (solve_state(copy) > 0)
-				copy.nums[j] = state.nums[j]
-				state.flags[j] |= FLAG_IMMUTABLE
-	true
+	# Expects a fully-numbered game_state on input, and makes sure
+	# FLAG_IMMUTABLE is only set on those numbers we need to solve
+	# (as for a real new-game); returns 1 if it managed
+	# this (such that it could solve it), or 0 if not.
+	new_game_strip: ->
+		copy = @clone()
+		copy.strip_nums()
+		return true if solve_state(copy) > 0
+		scratch = [0 .. @n - 1]
+		scratch.shuffle()
+		solved = do =>
+			# This is scungy. It might just be quick enough.
+			# It goes through, adding set numbers in empty squares
+			# until either we run out of empty squares (in the one
+			# we're half-solving) or else we solve it properly.
+			# NB that we run the entire solver each time, which
+			# strips the grid beforehand; we will save time if we
+			# avoid that.
+			for j in scratch
+				if copy.nums[j] > 0 and copy.nums[j] <= @n
+					continue # already solved to a real number here.
+				copy.nums[j] = @nums[j]
+				copy.flags[j] |= FLAG_IMMUTABLE
+				@flags[j] |= FLAG_IMMUTABLE
+				copy.strip_nums()
+				if solve_state(copy) > 0
+					return true
+			return false
+		return false if not solved
+		# Since we added basically at random, try now to remove numbers
+		# and see if we can still solve it; if we can (still), really
+		# remove the number. Make sure we don't remove the anchor numbers
+		# 1 and N.
+		for j in scratch
+			if (@flags[j] & FLAG_IMMUTABLE) and @nums[j] != 1 and @nums[j] != @n
+				@flags[j] &= ~FLAG_IMMUTABLE
+				copy = @clone()
+				copy.strip_nums()
+				if not (solve_state(copy) > 0)
+					copy.nums[j] = @nums[j]
+					@flags[j] |= FLAG_IMMUTABLE
+		true
 
 new_game_desc = (params) ->
 	state = new game_state(params.w, params.h)
@@ -360,12 +358,12 @@ new_game_desc = (params) ->
 					headi = Math.random_int(state.n)
 					taili = Math.random_int(state.n)
 					break unless headi == taili
-			break if new_game_fill(state, headi, taili)
+			break if state.new_game_fill(headi, taili)
 		state.flags[headi] |= FLAG_IMMUTABLE
 		state.flags[taili] |= FLAG_IMMUTABLE
 		# This will have filled in directions and _all_ numbers.
 		# Store the game definition for this, as the solved-state.
-		if new_game_strip(state)
+		if state.new_game_strip()
 			state.strip_nums()
 			return generate_desc(state, false)
 	throw 'Game generation failed.'
@@ -1238,7 +1236,7 @@ game_redraw = (dr, ds, state, ui) ->
 
 
 window.onload = ->
-	params = new game_params(9, 9, true)
+	params = new game_params(6, 6, true)
 	desc = new_game_desc(params)
 	state = [unpick_desc(params, desc)]
 	ui = new game_ui()
