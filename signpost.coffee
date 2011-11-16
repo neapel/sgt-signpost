@@ -41,8 +41,47 @@ FLAG_ERROR = 2
 
 # Generally useful functions
 
-ISREALNUM = (state, num) ->
-	num > 0 and num <= state.n
+
+# --- Game description string generation and unpicking ---
+
+dup_game_to = (to, from) ->
+	to.completed = from.completed
+	to.used_solve = from.used_solve
+	to.impossible = from.impossible
+	memcpy(to.dirs, from.dirs, to.n)
+	memcpy(to.flags, from.flags, to.n)
+	memcpy(to.nums, from.nums, to.n)
+	memcpy(to.next, from.next, to.n)
+	memcpy(to.prev, from.prev, to.n)
+	memcpy(to.dsf, from.dsf, to.n)
+	memcpy(to.numsi, from.numsi, (to.n+1))
+	null
+
+unpick_desc = (params, desc) ->
+	state = new game_state(params.w, params.h)
+	for cell, i in desc.split(',')
+		if ':' in cell
+			[num, dir] = cell.split(':')
+			state.nums[i] = +num
+			state.dirs[i] = +dir
+			state.flags[i] = FLAG_IMMUTABLE
+		else
+			state.dirs[i] = +cell
+			state.flags[i] = 0
+	state
+
+generate_desc = (state, issolve) ->
+	if issolve
+		'S'
+	else
+		descs =
+			for i in [0 .. state.n - 1]
+				if state.nums[i]
+					"#{state.nums[i]}:#{state.dirs[i]}"
+				else
+					"#{state.dirs[i]}"
+		descs.join(',')
+
 
 
 
@@ -68,8 +107,16 @@ class game_state
 		@numsi.fill(-1)
 		null
 
+	clone: ->
+		r = new game_state(@w, @h)
+		dup_game_to(r, this)
+		r
+
 	in_grid: (x, y) ->
 		x >= 0 and x < @w and y >= 0 and y < @h
+
+	is_real_number: (num) ->
+		num > 0 and num <= @n
 
 	whichdiri: (fromi, toi) ->
 		whichdir(0|(fromi % @w), 0|(fromi / @w), 0|(toi % @w), 0|(toi / @w))
@@ -104,7 +151,7 @@ class game_state
 		# the end of the sequence (if we happen not to have 1/n present)
 		n = num + d
 		gap = 0
-		while ISREALNUM(this, n) and @numsi[n] == -1
+		while @is_real_number(n) and @numsi[n] == -1
 			n += d
 			gap++
 		if gap == 0
@@ -133,11 +180,11 @@ class game_state
 		return false if @dsf.canonify(from) == @dsf.canonify(to)
 		# if both cells are actual numbers, can't drag if we're not
 		# one digit apart.
-		if ISREALNUM(this, nfrom) and ISREALNUM(this, nto)
+		if @is_real_number(nfrom) and @is_real_number(nto)
 			nfrom == nto - 1
-		else if clever and ISREALNUM(this, nfrom)
+		else if clever and @is_real_number(nfrom)
 			@move_couldfit(nfrom, +1, tox, toy)
-		else if clever and ISREALNUM(this, nto)
+		else if clever and @is_real_number(nto)
 			@move_couldfit(nto, -1, fromx, fromy)
 		else
 			true
@@ -161,75 +208,28 @@ class game_state
 		@dsf.constructor(@n)
 		null
 
-# --- Game description string generation and unpicking ---
+	# Game generation 
 
-dup_game_to = (to, from) ->
-	to.completed = from.completed
-	to.used_solve = from.used_solve
-	to.impossible = from.impossible
-	memcpy(to.dirs, from.dirs, to.n)
-	memcpy(to.flags, from.flags, to.n)
-	memcpy(to.nums, from.nums, to.n)
-	memcpy(to.next, from.next, to.n)
-	memcpy(to.prev, from.prev, to.n)
-	memcpy(to.dsf, from.dsf, to.n)
-	memcpy(to.numsi, from.numsi, (to.n+1))
-	null
-
-dup_game = (state) ->
-	ret = new game_state(state.w, state.h)
-	dup_game_to(ret, state)
-	ret
-
-unpick_desc = (params, desc) ->
-	state = new game_state(params.w, params.h)
-	for cell, i in desc.split(',')
-		if ':' in cell
-			[num, dir] = cell.split(':')
-			state.nums[i] = +num
-			state.dirs[i] = +dir
-			state.flags[i] = FLAG_IMMUTABLE
-		else
-			state.dirs[i] = +cell
-			state.flags[i] = 0
-	state
-
-generate_desc = (state, issolve) ->
-	if issolve
-		'S'
-	else
-		descs =
-			for i in [0 .. state.n - 1]
-				if state.nums[i]
-					"#{state.nums[i]}:#{state.dirs[i]}"
-				else
-					"#{state.dirs[i]}"
-		descs.join(',')
-
-# Game generation 
-
-# Fills in preallocated arrays ai (indices) and ad (directions)
-# showing all non-numbered cells adjacent to index i, returns length
-# This function has been somewhat optimised...
-cell_adj = (state, i) ->
-	adjacent = []
-	w = state.w
-	h = state.h
-	sx = 0|(i % w)
-	sy = 0|(i / w)
-	for a in [0 .. DIR_MAX - 1]
-		x = sx
-		y = sy
-		dx = dxs[a]
-		dy = dys[a]
-		while true
-			x += dx
-			y += dy
-			break if x < 0 or y < 0 or x >= w or y >= h
-			newi = y * w + x
-			if state.nums[newi] == 0
-				adjacent.push [newi, a]
-	adjacent
+	# Fills in preallocated arrays ai (indices) and ad (directions)
+	# showing all non-numbered cells adjacent to index i, returns length
+	# This function has been somewhat optimised...
+	cell_adj: (i) ->
+		adjacent = []
+		sx = 0|(i % @w)
+		sy = 0|(i / @w)
+		for a in [0 .. DIR_MAX - 1]
+			x = sx
+			y = sy
+			dx = dxs[a]
+			dy = dys[a]
+			while true
+				x += dx
+				y += dy
+				break unless @in_grid(x, y)
+				newi = y * @w + x
+				if @nums[newi] == 0
+					adjacent.push [newi, a]
+		adjacent
 
 new_game_fill = (state, headi, taili) ->
 	memset(state.nums, 0, state.n)
@@ -240,7 +240,7 @@ new_game_fill = (state, headi, taili) ->
 	while nfilled < state.n
 		# Try and expand _from_ headi; keep going if there's only one
 		# place to go to.
-		adj = cell_adj(state, headi)
+		adj = state.cell_adj(headi)
 		while true
 			return false if adj.length == 0
 			[aidx, adir] = adj[Math.random_int(adj.length)]
@@ -248,11 +248,11 @@ new_game_fill = (state, headi, taili) ->
 			state.nums[aidx] = state.nums[headi] + 1
 			nfilled++
 			headi = aidx
-			adj = cell_adj(state, headi)
+			adj = state.cell_adj(headi)
 			break unless adj.length == 1
 		# Try and expand _to_ taili; keep going if there's only one
 		# place to go to.
-		adj = cell_adj(state, taili)
+		adj = state.cell_adj(taili)
 		while true
 			return false if adj.length == 0
 			[aidx, adir] = adj[Math.random_int(adj.length)]
@@ -260,7 +260,7 @@ new_game_fill = (state, headi, taili) ->
 			state.nums[aidx] = state.nums[taili] - 1
 			nfilled++
 			taili = aidx
-			adj = cell_adj(state, taili)
+			adj = state.cell_adj(taili)
 			break unless adj.length == 1
 	# If we get here we have headi and taili set but unconnected
 	# by direction: we need to set headi's direction so as to point
@@ -306,7 +306,7 @@ new_game_fill = (state, headi, taili) ->
 # (as for a real new-game); returns 1 if it managed
 # this (such that it could solve it), or 0 if not.
 new_game_strip = (state) ->
-	copy = dup_game(state)
+	copy = state.clone()
 	copy.strip_nums()
 	return true if solve_state(copy) > 0
 	scratch = [0 .. state.n - 1]
@@ -339,7 +339,7 @@ new_game_strip = (state) ->
 		j = scratch[i]
 		if (state.flags[j] & FLAG_IMMUTABLE) and state.nums[j] != 1 and state.nums[j] != state.n
 			state.flags[j] &= ~FLAG_IMMUTABLE
-			dup_game_to(copy, state)
+			copy = state.clone()
 			copy.strip_nums()
 			if not (solve_state(copy) > 0)
 				copy.nums[j] = state.nums[j]
@@ -629,7 +629,7 @@ solve_single = (state, copy) ->
 			x += dxs[d]
 			y += dys[d]
 			break if not state.in_grid(x, y)
-			continue if not state.isvalidmove(1, sx, sy, x, y)
+			continue if not state.isvalidmove(true, sx, sy, x, y)
 			# can't link to somewhere with a back-link we would have to
 			# break (the solver just doesn't work like this).
 			j = y * w + x
@@ -669,7 +669,7 @@ solve_single = (state, copy) ->
 
 # Returns 1 if we managed to solve it, 0 otherwise.
 solve_state = (state) ->
-	copy = dup_game(state)
+	copy = state.clone()
 	while true
 		update_numbers(state)
 		if solve_single(state, copy)
@@ -685,12 +685,12 @@ solve_state = (state) ->
 		if check_completion(state, false) then 1 else 0
 
 solve_game = (state, currstate) ->
-	tosolve = dup_game(currstate)
+	tosolve = currstate.clone()
 	result = solve_state(tosolve)
 	if result > 0
 		ret = generate_desc(tosolve, true)
 		return ret if ret
-	tosolve = dup_game(state)
+	tosolve = state.clone()
 	result = solve_state(tosolve)
 	if result < 0
 		throw 'Puzzle is impossible.'
@@ -782,12 +782,12 @@ interpret_move = (state, ui, ds, mx, my, button) ->
 			if ui.sx == ui.cx and ui.sy == ui.cy
 				null
 			else if ui.drag_is_from
-				if not state.isvalidmove(0, ui.sx, ui.sy, ui.cx, ui.cy)
+				if not state.isvalidmove(false, ui.sx, ui.sy, ui.cx, ui.cy)
 					null
 				else
 					['L', ui.sx, ui.sy, ui.cx, ui.cy]
 			else
-				if not state.isvalidmove(0, ui.cx, ui.cy, ui.sx, ui.sy)
+				if not state.isvalidmove(false, ui.cx, ui.cy, ui.sx, ui.sy)
 					null
 				else
 					['L', ui.cx, ui.cy, ui.sx, ui.sy]
@@ -835,12 +835,12 @@ interpret_move = (state, ui, ds, mx, my, button) ->
 			else
 				[(if ui.drag_is_from then 'C' else 'X'), ui.sx, ui.sy]
 		else if ui.drag_is_from
-			if not state.isvalidmove(0, ui.sx, ui.sy, x, y)
+			if not state.isvalidmove(false, ui.sx, ui.sy, x, y)
 				null
 			else
 				['L', ui.sx, ui.sy, x, y]
 		else
-			if not state.isvalidmove(0, x, y, ui.sx, ui.sy)
+			if not state.isvalidmove(false, x, y, ui.sx, ui.sy)
 				null
 			else
 				['L', x, y, ui.sx, ui.sy]
@@ -871,7 +871,7 @@ execute_move = (state, move) ->
 		p.h = state.h
 		if validate_desc(p, move.substring(1))
 			return null
-		ret = dup_game(state)
+		ret = state.clone()
 		tmp = new_game(p, move.substring(1))
 		for i in [0 .. state.n - 1]
 			ret.prev[i] = tmp.prev[i]
@@ -879,9 +879,9 @@ execute_move = (state, move) ->
 		ret.used_solve = 1
 	else if move[0] == 'L'
 		[c, sx, sy, ex, ey] = move
-		if not state.isvalidmove(0, sx, sy, ex, ey)
+		if not state.isvalidmove(false, sx, sy, ex, ey)
 			return null
-		ret = dup_game(state)
+		ret = state.clone()
 		si = sy * w + sx
 		ei = ey * w + ex
 		ret.makelink(si, ei)
@@ -892,7 +892,7 @@ execute_move = (state, move) ->
 		si = sy * w + sx
 		if state.prev[si] == -1 and state.next[si] == -1
 			return null
-		ret = dup_game(state)
+		ret = state.clone()
 		if c == 'C'
 			# Unlink the single cell we dragged from the board.
 			unlink_cell(ret, si)
@@ -906,7 +906,7 @@ execute_move = (state, move) ->
 				continue if set != sset
 				unlink_cell(ret, i)
 	else if move[0] == 'H'
-		ret = dup_game(state)
+		ret = state.clone()
 		solve_state(ret)
 	# done
 	if ret
