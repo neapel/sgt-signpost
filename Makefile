@@ -6,6 +6,9 @@ all : $(OUTPUT)
 %.js : %.coffee
 	coffee -cb -o . $^
 
+depend :
+	wget -nc 'http://davidbau.com/encode/seedrandom.js'
+
 .PHONY : clean
 clean :
 	-rm $(OUTPUT)

@@ -1,5 +1,6 @@
 # signpost.c: implementation of the janko game 'arrow path'
 
+Math.seedrandom('foo')
 
 class game_params
 	constructor: (@w, @h, @force_corner_start) ->
@@ -309,7 +310,7 @@ class game_state
 	new_game_strip: ->
 		copy = @clone()
 		copy.strip_nums()
-		return true if solve_state(copy) > 0
+		return true if solve_state(copy)
 		scratch = [0 .. @n - 1]
 		scratch.shuffle()
 		solved = do =>
@@ -327,7 +328,9 @@ class game_state
 				copy.flags[j] |= FLAG_IMMUTABLE
 				@flags[j] |= FLAG_IMMUTABLE
 				copy.strip_nums()
-				if solve_state(copy) > 0
+				cps = solve_state(copy)
+				if cps
+					copy = cps
 					return true
 			return false
 		return false if not solved
@@ -340,9 +343,12 @@ class game_state
 				@flags[j] &= ~FLAG_IMMUTABLE
 				copy = @clone()
 				copy.strip_nums()
-				if not (solve_state(copy) > 0)
+				cps = solve_state(copy)
+				if not cps
 					copy.nums[j] = @nums[j]
 					@flags[j] |= FLAG_IMMUTABLE
+				else
+					copy = cps
 		true
 
 	connect_numbers: ->
@@ -505,7 +511,7 @@ class game_state
 					return ret
 			else if move[0] == 'H'
 				ret = @clone()
-				solve_state(ret)
+				ret = solve_state(ret)
 				return ret
 		if new_state
 			new_state.update_numbers()
@@ -697,21 +703,25 @@ solve_single = (state, copy) ->
 	return nlinks
 
 # Returns 1 if we managed to solve it, 0 otherwise.
-solve_state = (state) ->
+solve_state = (rd_state) ->
+	state = rd_state.clone()
 	copy = state.clone()
 	while true
 		state.update_numbers()
 		if solve_single(state, copy)
-			copy.clone_to(state)
+			state = copy.clone()
 			if state.impossible
 				break
 		else
 			break
 	state.update_numbers()
 	if state.impossible
-		-1
+		throw 'impossible'
 	else
-		if state.check_completion(false) then 1 else 0
+		if state.check_completion(false)
+			state
+		else
+			null
 
 
 LEFT_BUTTON = 1
@@ -1172,7 +1182,8 @@ class drawstate
 
 window.onload = ->
 	params = new game_params(6, 6, true)
-	state = [new_game(params)]
+	for i in [0 .. 50]
+		state = [new_game(params)]
 	ui = new game_ui()
 
 
