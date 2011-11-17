@@ -2,11 +2,36 @@
 
 Math.seedrandom('foo')
 
-class game_params
+class GameParams
 	constructor: (@w, @h, @force_corner_start) ->
 		throw 'W, H must at least be 2' if @w < 2 or @h < 2
 		throw 'One must at least be 3' if @w == 2 and @h == 2
-		null
+
+	new_game: ->
+		for x in [0 .. 50]
+			state = new game_state(@w, @h)
+			# keep trying until we fill successfully.
+			while true
+				if @force_corner_start
+					headi = 0
+					taili = state.n - 1
+				else
+					while true
+						headi = Math.random_int(state.n)
+						taili = Math.random_int(state.n)
+						break unless headi == taili
+				break if state.new_game_fill(headi, taili)
+			state.flags[headi] |= FLAG_IMMUTABLE
+			state.flags[taili] |= FLAG_IMMUTABLE
+			# This will have filled in directions and _all_ numbers.
+			# Store the game definition for this, as the solved-state.
+			if state.new_game_strip()
+				state.strip_nums()
+				state.update_numbers()
+				state.check_completion(true) # update any auto-links
+				return state
+		throw 'Game generation failed.'
+
 
 DIRECTION = [
 	{x:  0, y: -1} # N
@@ -27,9 +52,9 @@ whichdir = (fromx, fromy, tox, toy) ->
 	if dx and dy and Math.abs(dx) != Math.abs(dy)
 		return -1
 	if dx
-		dx = dx / Math.abs(dx) # limit to (-1, 0, 1)
+		dx = 0|(dx / Math.abs(dx)) # limit to (-1, 0, 1)
 	if dy
-		dy = dy / Math.abs(dy) # ditto
+		dy = 0|(dy / Math.abs(dy)) # ditto
 	for dir, i in DIRECTION
 		if dx == dir.x and dy == dir.y
 			return i
@@ -49,16 +74,12 @@ class game_state
 		@prev = snewn(@n) # links to other cell indexes, size n (-1 absent)
 		@dsf = new DisjointSetForest(@n) # connects regions with a dsf.
 		@numsi = snewn(@n + 1) # for each number, which index is it in? (-1 absent)
-		@blank()
-
-	blank: ->
 		@dirs.fill(0)
 		@nums.fill(0)
 		@flags.fill(0)
 		@next.fill(-1)
 		@prev.fill(-1)
 		@numsi.fill(-1)
-		null
 
 	clone: ->
 		to = new game_state(@w, @h)
@@ -578,31 +599,6 @@ class game_state
 			else
 				null
 
-new_game = (params) ->
-	state = new game_state(params.w, params.h)
-	for x in [0 .. 50]
-		state.blank()
-		# keep trying until we fill successfully.
-		while true
-			if params.force_corner_start
-				headi = 0
-				taili = state.n-1
-			else
-				while true
-					headi = Math.random_int(state.n)
-					taili = Math.random_int(state.n)
-					break unless headi == taili
-			break if state.new_game_fill(headi, taili)
-		state.flags[headi] |= FLAG_IMMUTABLE
-		state.flags[taili] |= FLAG_IMMUTABLE
-		# This will have filled in directions and _all_ numbers.
-		# Store the game definition for this, as the solved-state.
-		if state.new_game_strip()
-			state.strip_nums()
-			state.update_numbers()
-			state.check_completion(true) # update any auto-links
-			return state
-	throw 'Game generation failed.'
 
 
 # --- Linked-list and numbers array --- 
@@ -1159,9 +1155,9 @@ class drawstate
 
 
 window.onload = ->
-	params = new game_params(6, 6, true)
+	params = new GameParams(6, 6, true)
 	for i in [0 .. 50]
-		state = [new_game(params)]
+		state = [params.new_game()]
 	ui = new game_ui()
 
 
