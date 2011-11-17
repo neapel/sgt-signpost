@@ -8,8 +8,6 @@ class game_params
 		throw 'One must at least be 3' if @w == 2 and @h == 2
 		null
 
-DIR_MAX = 8
-
 DIRECTION = [
 	{x:  0, y: -1} # N
 	{x:  1, y: -1} # NE
