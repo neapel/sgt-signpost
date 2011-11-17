@@ -66,10 +66,12 @@ FLAG_ERROR = 2
 class Cell
 	constructor: ->
 		@dir = 0
+		@num = 0
 
 	clone: ->
 		c = new Cell()
 		c.dir = @dir
+		c.num = @num
 		c
 
 class game_state
@@ -78,13 +80,11 @@ class game_state
 		@completed = @used_solve = @impossible = false #int
 		@cells = for i in [0 .. @n - 1]
 			new Cell()
-		@nums = snewn(@n) # numbers, size n, int*
 		@flags = snewn(@n) # flags, size n, uint*
 		@next = snewn(@n)
 		@prev = snewn(@n) # links to other cell indexes, size n (-1 absent)
 		@dsf = new DisjointSetForest(@n) # connects regions with a dsf.
 		@numsi = snewn(@n + 1) # for each number, which index is it in? (-1 absent)
-		@nums.fill(0)
 		@flags.fill(0)
 		@next.fill(-1)
 		@prev.fill(-1)
@@ -99,7 +99,6 @@ class game_state
 			c.clone()
 		for i in [0 .. @n - 1]
 			to.flags[i] = @flags[i]
-			to.nums[i] = @nums[i]
 			to.next[i] = @next[i]
 			to.prev[i] = @prev[i]
 		to.dsf = @dsf.clone()
@@ -128,7 +127,7 @@ class game_state
 		if fromx == tox and fromy == toy
 			return false
 		# the final number points to nothing.
-		if @nums[fromy * @w + fromx] == @n
+		if @cells[fromy * @w + fromx].num == @n
 			return false
 		while true
 			if not @in_grid(fromx, fromy)
@@ -158,7 +157,7 @@ class game_state
 		if gap == 0
 			# no gap, so the only allowable move is that that directly
 			# links the two numbers.
-			@nums[i] != num + d
+			@cells[i].num != num + d
 		else if @prev[i] == -1 and @next[i] == -1
 			true # single unconnected square, always OK
 		else
@@ -171,8 +170,8 @@ class game_state
 		return false unless @ispointing(fromx, fromy, tox, toy)
 		from = fromy * @w + fromx
 		to = toy * @w + tox
-		nfrom = @nums[from]
-		nto = @nums[to]
+		nfrom = @cells[from].num
+		nto = @cells[to].num
 		# can't move _from_ the preset final number, or _to_ the preset 1.
 		return false if nfrom == @n and (@flags[from] & FLAG_IMMUTABLE)
 		return false if nto == 1 and (@flags[to] & FLAG_IMMUTABLE)
@@ -211,7 +210,7 @@ class game_state
 	strip_nums: ->
 		for i in [0 .. @n - 1]
 			if not (@flags[i] & FLAG_IMMUTABLE)
-				@nums[i] = 0
+				@cells[i].num = 0
 		@next.fill(-1)
 		@prev.fill(-1)
 		@numsi.fill(-1)
@@ -235,14 +234,15 @@ class game_state
 				y += dir.y
 				break unless @in_grid(x, y)
 				newi = y * @w + x
-				if @nums[newi] == 0
+				if @cells[newi].num == 0
 					adjacent.push [newi, a]
 		adjacent
 
 	new_game_fill: (headi, taili) ->
-		@nums.fill(0)
-		@nums[headi] = 1
-		@nums[taili] = @n
+		for c in @cells
+			c.num = 0
+		@cells[headi].num = 1
+		@cells[taili].num = @n
 		@cells[taili].dir = 0
 		nfilled = 2
 		while nfilled < @n
@@ -253,7 +253,7 @@ class game_state
 				return false if adj.length == 0
 				[aidx, adir] = adj[Math.random_int(adj.length)]
 				@cells[headi].dir = adir
-				@nums[aidx] = @nums[headi] + 1
+				@cells[aidx].num = @cells[headi].num + 1
 				nfilled++
 				headi = aidx
 				adj = @cell_adj(headi)
@@ -265,7 +265,7 @@ class game_state
 				return false if adj.length == 0
 				[aidx, adir] = adj[Math.random_int(adj.length)]
 				@cells[aidx].dir = DIR_OPPOSITE(adir)
-				@nums[aidx] = @nums[taili] - 1
+				@cells[aidx].num = @cells[taili].num - 1
 				nfilled++
 				taili = aidx
 				adj = @cell_adj(taili)
@@ -328,9 +328,9 @@ class game_state
 			# strips the grid beforehand; we will save time if we
 			# avoid that.
 			for j in scratch
-				if copy.nums[j] > 0 and copy.nums[j] <= @n
+				if copy.cells[j].num > 0 and copy.cells[j].num <= @n
 					continue # already solved to a real number here.
-				copy.nums[j] = @nums[j]
+				copy.cells[j].num = @cells[j].num
 				copy.flags[j] |= FLAG_IMMUTABLE
 				@flags[j] |= FLAG_IMMUTABLE
 				copy.strip_nums()
@@ -345,13 +345,13 @@ class game_state
 		# remove the number. Make sure we don't remove the anchor numbers
 		# 1 and N.
 		for j in scratch
-			if (@flags[j] & FLAG_IMMUTABLE) and @nums[j] != 1 and @nums[j] != @n
+			if (@flags[j] & FLAG_IMMUTABLE) and @cells[j].num != 1 and @cells[j].num != @n
 				@flags[j] &= ~FLAG_IMMUTABLE
 				copy = @clone()
 				copy.strip_nums()
 				cps = copy.solve_state()
 				if not cps
-					copy.nums[j] = @nums[j]
+					copy.cells[j].num = @cells[j].num
 					@flags[j] |= FLAG_IMMUTABLE
 				else
 					copy = cps
@@ -403,9 +403,9 @@ class game_state
 		@numsi.fill(-1)
 		for i in [0 .. @n - 1]
 			if @flags[i] & FLAG_IMMUTABLE
-				@numsi[@nums[i]] = i
+				@numsi[@cells[i].num] = i
 			else if @prev[i] == -1 and @next[i] == -1
-				@nums[i] = 0
+				@cells[i].num = 0
 		@connect_numbers()
 		# Construct an array of the heads of all current regions, together
 		# with their preferred colours.
@@ -436,7 +436,7 @@ class game_state
 				if not (@flags[j] & FLAG_IMMUTABLE)
 					if nnum > 0 and nnum <= @n
 						@numsi[nnum] = j
-					@nums[j] = nnum
+					@cells[j].num = nnum
 				nnum++
 				j = @next[j]
 		null
@@ -453,9 +453,9 @@ class game_state
 				@flags[j] &= ~FLAG_ERROR
 		# Search for repeated numbers.
 		for j in [0 .. @n - 1]
-			if @nums[j] > 0 and @nums[j] <= @n
+			if @cells[j].num > 0 and @cells[j].num <= @n
 				for k in [j + 1 .. @n - 1] by 1
-					if @nums[k] == @nums[j]
+					if @cells[k].num == @cells[j].num
 						if mark_errors
 							@flags[j] |= FLAG_ERROR
 							@flags[k] |= FLAG_ERROR
@@ -479,7 +479,7 @@ class game_state
 					@makelink(@numsi[n], @numsi[n+1])
 		# Search and mark numbers less than 0, or 0 with links.
 		for n in [1 .. @n - 1]
-			if @nums[n] < 0 or (@nums[n] == 0 and (@next[n] != -1 or @prev[n] != -1))
+			if @cells[n].num < 0 or (@cells[n].num == 0 and (@next[n] != -1 or @prev[n] != -1))
 				error = true
 				if mark_errors
 					@flags[n] |= FLAG_ERROR
@@ -508,11 +508,11 @@ class game_state
 					return ret
 				else
 					ret = @clone()
-					sset = @region_colour(@nums[si])
+					sset = @region_colour(@cells[si].num)
 					for i in [0 .. @n - 1]
 						# Unlink all cells in the same set as the one we dragged
 						# from the board.
-						if @nums[i] != 0 and sset == @region_colour(@nums[i])
+						if @cells[i].num != 0 and sset == @region_colour(@cells[i].num)
 							ret.unlink_cell(i)
 					return ret
 			else if move[0] == 'H'
@@ -541,7 +541,7 @@ class game_state
 		# poss is 'can I link to anything' with the same meanings.
 		for i in [0 .. @n - 1]
 			continue if @next[i] != -1
-			continue if @nums[i] == @n # no next from last no.
+			continue if @cells[i].num == @n # no next from last no.
 			d = @cells[i].dir
 			poss = -1
 			sx = x = 0|(i % @w)
@@ -555,7 +555,7 @@ class game_state
 				# break (the solver just doesn't work like this).
 				j = y * @w + x
 				continue if @prev[j] != -1
-				if @nums[i] > 0 and @nums[j] > 0 and @nums[i] <= @n and @nums[j] <= @n and @nums[j] == @nums[i] + 1
+				if @cells[i].num > 0 and @cells[j].num > 0 and @cells[i].num <= @n and @cells[j].num <= @n and @cells[j].num == @cells[i].num + 1
 					poss = j
 					from[j] = i
 					break
@@ -575,7 +575,7 @@ class game_state
 				nlinks++
 		for i in [0 .. @n]
 			continue if @prev[i] != -1
-			continue if @nums[i] == 1 # no prev from 1st no.
+			continue if @cells[i].num == 1 # no prev from 1st no.
 			x = 0|(i % @w)
 			y = 0|(i / @w)
 			if from[i] == -1
@@ -628,7 +628,7 @@ class head_meta
 		offset = 0
 		while j != -1
 			if state.flags[j] & FLAG_IMMUTABLE
-				ss = state.nums[j] - offset
+				ss = state.cells[j].num - offset
 				if not @preference
 					@start = ss
 					@preference = 1
@@ -638,13 +638,13 @@ class head_meta
 			offset++
 			j = state.next[j]
 		return if @preference
-		if state.nums[i] == 0 and state.nums[state.next[i]] > state.n
+		if state.cells[i].num == 0 and state.cells[state.next[i]].num > state.n
 			# (probably) empty cell onto the head of a coloured region:
 			# make sure we start at a 0 offset.
-			@start = state.region_start(state.region_colour(state.nums[state.next[i]]))
+			@start = state.region_start(state.region_colour(state.cells[state.next[i]].num))
 			@preference = 1
 			@why = 'adding blank cell to head of numbered region'
-		else if state.nums[i] <= state.n
+		else if state.cells[i].num <= state.n
 			# if we're 0 we're probably just blank -- but even if we're a
 			# (real) numbered region, we don't have an immutable number
 			# in it (any more) otherwise it'd have been caught above, so
@@ -653,21 +653,21 @@ class head_meta
 			@preference = 0
 			@why = 'lowest available colour group'
 		else
-			c = state.region_colour(state.nums[i])
+			c = state.region_colour(state.cells[i].num)
 			n = 1
 			sz = state.dsf.size(i)
 			j = i
 			while state.next[j] != -1
 				j = state.next[j]
-				if state.nums[j] == 0 and state.next[j] == -1
+				if state.cells[j].num == 0 and state.next[j] == -1
 					@start = state.region_start(c)
 					@preference = 1
 					@why = 'adding blank cell to end of numbered region'
 					return
-				if state.region_colour(state.nums[j]) == c
+				if state.region_colour(state.cells[j].num) == c
 					n++
 				else
-					start_alternate = state.region_start(state.region_colour(state.nums[j]))
+					start_alternate = state.region_start(state.region_colour(state.cells[j].num))
 					if n < (sz - n)
 						@start = start_alternate
 						@preference = 1
@@ -809,11 +809,11 @@ class game_ui
 				return null
 			if button == LEFT_BUTTON
 				# disallow dragging from the final number.
-				if (state.nums[y*w+x] == state.n) and (state.flags[y*w+x] & FLAG_IMMUTABLE)
+				if (state.cells[y*w+x].num == state.n) and (state.flags[y*w+x] & FLAG_IMMUTABLE)
 					return null
 			else if button == RIGHT_BUTTON
 				# disallow dragging to the first number.
-				if (state.nums[y*w+x] == 1) and (state.flags[y*w+x] & FLAG_IMMUTABLE)
+				if (state.cells[y*w+x].num == 1) and (state.flags[y*w+x] & FLAG_IMMUTABLE)
 					return null
 			@dragging = true
 			@drag_is_from = (button == LEFT_BUTTON)
@@ -1139,7 +1139,7 @@ class drawstate
 							f |= F_DIM
 					else if not state.ispointing(x, y, ui.sx, ui.sy)
 						f |= F_DIM
-				if state.impossible or state.nums[i] < 0 or state.flags[i] & FLAG_ERROR
+				if state.impossible or state.cells[i].num < 0 or state.flags[i] & FLAG_ERROR
 					f |= F_ERROR
 				if state.flags[i] & FLAG_IMMUTABLE
 					f |= F_IMMUTABLE
@@ -1151,7 +1151,7 @@ class drawstate
 					# sense to the direction.
 					f |= F_ARROW_INPOINT
 					dirp = whichdir(x, y, 0|(state.prev[i] % w), 0|(state.prev[i] / w))
-				@tile_redraw(@border + x * @tilesize, @border + y * @tilesize, state.cells[i].dir, dirp, state.nums[i], f)
+				@tile_redraw(@border + x * @tilesize, @border + y * @tilesize, state.cells[i].dir, dirp, state.cells[i].num, f)
 		if ui.dragging
 			@dragging = true
 			@dx = ui.dx - @tilesize/2
