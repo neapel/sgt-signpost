@@ -607,15 +607,14 @@ class game_state
 
 
 class head_meta
-	constructor: (state, i) ->
+	constructor: (state, @i) ->
 		@start = null # region start number preferred, or 0 if !preference
-		@i = i # position
 		@sz = state.dsf.size(i) # size of region
 		@why = null
 		# Search through this chain looking for real numbers, checking that
 		# they match up (if there are more than one).
 		@preference = 0 # 0 if we have no preference (and should just pick one)
-		j = i
+		j = @i
 		offset = 0
 		while j != -1
 			if state.flags[j] & FLAG_IMMUTABLE
@@ -692,8 +691,6 @@ compare_heads = (ha, hb) ->
 	return -1 if ha.i > hb.i
 	return 1 if ha.i < hb.i
 	return 0
-
-# --- Solver ---
 
 
 
