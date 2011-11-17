@@ -79,7 +79,8 @@ class game_state
 		@numsi.fill(-1)
 		null
 
-	clone_to: (to) ->
+	clone: ->
+		to = new game_state(@w, @h)
 		to.completed = @completed
 		to.used_solve = @used_solve
 		to.impossible = @impossible
@@ -92,12 +93,7 @@ class game_state
 		to.dsf = @dsf.clone()
 		for v, i in @numsi
 			to.numsi[i] = v
-		null
-
-	clone: ->
-		r = new game_state(@w, @h)
-		@clone_to(r)
-		r
+		to
 
 	in_grid: (x, y) ->
 		x >= 0 and x < @w and y >= 0 and y < @h
