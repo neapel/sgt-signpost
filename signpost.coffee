@@ -803,8 +803,7 @@ class game_ui
 
 	# returns a move object to be passed to state.execute_move()
 	interpret_move: (state, ds, mx, my, button) ->
-		x = ds.FROMCOORD(mx)
-		y = ds.FROMCOORD(my)
+		[x, y] = ds.cell_at(mx, my)
 		w = state.w
 		if IS_CURSOR_MOVE(button)
 			switch button
@@ -818,8 +817,7 @@ class game_ui
 					@cx = (@cx + 1) % state.w
 			@cshow = true
 			if @dragging
-				@dx = ds.COORD(@cx) + ds.tilesize/2
-				@dy = ds.COORD(@cy) + ds.tilesize/2
+				[@dx, @dy] = ds.cell_center(@cx, @cy)
 			null
 		else if IS_CURSOR_SELECT(button)
 			if not @cshow
@@ -842,8 +840,7 @@ class game_ui
 				@dragging = true
 				@sx = @cx
 				@sy = @cy
-				@dx = ds.COORD(@cx) + ds.tilesize/2
-				@dy = ds.COORD(@cy) + ds.tilesize/2
+				[@dx, @dy] = ds.cell_center(@cx, @cy)
 				@drag_is_from = (button == CURSOR_SELECT)
 				null
 		else if IS_MOUSE_DOWN(button)
@@ -938,12 +935,6 @@ set_color = (set) ->
 			hue += shift
 	Color({hue: hue, saturation: 0.3, value: 1}).toCSS()
 
-num2col = (ds, num) ->
-	set = 0|(num / (ds.n + 1))
-	if num <= 0 or set == 0
-		return '#fff'
-	else
-		set_color(set)
 
 dim = (a, b) ->
 	Color(a).blend(Color(b), 0.5).toCSS()
@@ -961,11 +952,21 @@ class drawstate
 		@n = state.n
 		@dragging = @dx = @dy = 0
 
-	COORD: (x) ->
-		x * @tilesize + @border
+	# return coordinate of tile center from index
+	cell_center: (cx, cy) ->
+		[x, y] = @cell_coord(cx, cy)
+		[x + @tilesize / 2, y + @tilesize / 2]
+		
+	# return coordinate of upper left corner
+	cell_coord: (x, y) ->
+		[x * @tilesize + @border, y * @tilesize + @border]
 
-	FROMCOORD: (x) ->
-		0|((x - @border + @tilesize) / @tilesize) - 1
+	# return cell index for coordinate
+	cell_at: (x, y) ->
+		[
+			0|((x - @border + @tilesize) / @tilesize) - 1
+			0|((y - @border + @tilesize) / @tilesize) - 1
+		]
 
 	# cx, cy are top-left corner. sz is the 'radius' of the arrow.
 	# ang is in radians, clockwise from 0 == straight up.
@@ -1021,7 +1022,16 @@ class drawstate
 			# immutable number 4) so we _do_ display the 0 if the cell
 			# has a link in or a link out.
 		# Calculate colours.
-		setcol = if empty then COL_BACKGROUND else num2col(this, num)
+		setcol =
+			if empty
+				COL_BACKGROUND
+			else
+				set = 0|(num / (@n + 1))
+				if num <= 0 or set == 0
+					'#fff'
+				else
+					set_color(set)
+
 		arrowcol =
 			if f & F_DRAG_SRC
 				COL_DRAG_ORIGIN
@@ -1103,16 +1113,14 @@ class drawstate
 	draw_drag_indicator: (state, ui, validdrag) ->
 		w = state.w
 		acol = COL_ARROW
-		fx = @FROMCOORD(ui.dx)
-		fy = @FROMCOORD(ui.dy)
+		[fx, fy] = @cell_at(ui.dx, ui.dy)
 		if validdrag
 			# If we could move here, lock the arrow to the appropriate direction.
 			dir = if ui.drag_is_from then state.dirs[ui.sy*w+ui.sx] else state.dirs[fy*w+fx]
 			ang = (2.0 * Math.PI * dir) / 8.0 # similar to calculation in draw_arrow_dir.
 		else
 			# Draw an arrow pointing away from/towards the origin cell.
-			ox = @COORD(ui.sx) + @tilesize/2
-			oy = @COORD(ui.sy) + @tilesize/2
+			[ox, oy] = @cell_center(ui.sx, ui.sy)
 			xdiff = Math.abs(ox - ui.dx)
 			ydiff = Math.abs(oy - ui.dy)
 			ang =
