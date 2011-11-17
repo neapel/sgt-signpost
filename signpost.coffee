@@ -63,18 +63,27 @@ whichdir = (fromx, fromy, tox, toy) ->
 FLAG_IMMUTABLE = 1
 FLAG_ERROR = 2
 
+class Cell
+	constructor: ->
+		@dir = 0
+
+	clone: ->
+		c = new Cell()
+		c.dir = @dir
+		c
+
 class game_state
 	constructor: (@w, @h) ->
 		@n = @w * @h
 		@completed = @used_solve = @impossible = false #int
-		@dirs = snewn(@n) # direction enums, size n int*
+		@cells = for i in [0 .. @n - 1]
+			new Cell()
 		@nums = snewn(@n) # numbers, size n, int*
 		@flags = snewn(@n) # flags, size n, uint*
 		@next = snewn(@n)
 		@prev = snewn(@n) # links to other cell indexes, size n (-1 absent)
 		@dsf = new DisjointSetForest(@n) # connects regions with a dsf.
 		@numsi = snewn(@n + 1) # for each number, which index is it in? (-1 absent)
-		@dirs.fill(0)
 		@nums.fill(0)
 		@flags.fill(0)
 		@next.fill(-1)
@@ -86,8 +95,9 @@ class game_state
 		to.completed = @completed
 		to.used_solve = @used_solve
 		to.impossible = @impossible
+		to.cells = for c in @cells
+			c.clone()
 		for i in [0 .. @n - 1]
-			to.dirs[i] = @dirs[i]
 			to.flags[i] = @flags[i]
 			to.nums[i] = @nums[i]
 			to.next[i] = @next[i]
@@ -113,7 +123,7 @@ class game_state
 		whichdir(0|(fromi % @w), 0|(fromi / @w), 0|(toi % @w), 0|(toi / @w))
 
 	ispointing: (fromx, fromy, tox, toy) ->
-		dir = @dirs[fromy * @w + fromx]
+		dir = @cells[fromy * @w + fromx].dir
 		# (by convention) squares do not poto themselves.
 		if fromx == tox and fromy == toy
 			return false
@@ -233,7 +243,7 @@ class game_state
 		@nums.fill(0)
 		@nums[headi] = 1
 		@nums[taili] = @n
-		@dirs[taili] = 0
+		@cells[taili].dir = 0
 		nfilled = 2
 		while nfilled < @n
 			# Try and expand _from_ headi; keep going if there's only one
@@ -242,7 +252,7 @@ class game_state
 			while true
 				return false if adj.length == 0
 				[aidx, adir] = adj[Math.random_int(adj.length)]
-				@dirs[headi] = adir
+				@cells[headi].dir = adir
 				@nums[aidx] = @nums[headi] + 1
 				nfilled++
 				headi = aidx
@@ -254,7 +264,7 @@ class game_state
 			while true
 				return false if adj.length == 0
 				[aidx, adir] = adj[Math.random_int(adj.length)]
-				@dirs[aidx] = DIR_OPPOSITE(adir)
+				@cells[aidx].dir = DIR_OPPOSITE(adir)
 				@nums[aidx] = @nums[taili] - 1
 				nfilled++
 				taili = aidx
@@ -263,10 +273,10 @@ class game_state
 		# If we get here we have headi and taili set but unconnected
 		# by direction: we need to set headi's direction so as to point
 		# at taili.
-		@dirs[headi] = @whichdiri(headi, taili)
+		@cells[headi].dir = @whichdiri(headi, taili)
 		# it could happen that our last two weren't in line; if that's the
 		# case, we have to start again.
-		@dirs[headi] != -1
+		@cells[headi].dir != -1
 
 	# Better generator: with the 'generate, sprinkle numbers, solve,
 	# repeat' algorithm we're _never_ generating anything greater than
@@ -532,7 +542,7 @@ class game_state
 		for i in [0 .. @n - 1]
 			continue if @next[i] != -1
 			continue if @nums[i] == @n # no next from last no.
-			d = @dirs[i]
+			d = @cells[i].dir
 			poss = -1
 			sx = x = 0|(i % @w)
 			sy = y = 0|(i / @w)
@@ -1065,7 +1075,7 @@ class drawstate
 		[fx, fy] = @cell_at(ui.dx, ui.dy)
 		if validdrag
 			# If we could move here, lock the arrow to the appropriate direction.
-			dir = if ui.drag_is_from then state.dirs[ui.sy*w+ui.sx] else state.dirs[fy*w+fx]
+			dir = if ui.drag_is_from then state.cells[ui.sy*w+ui.sx].dir else state.cells[fy*w+fx].dir
 			ang = (2.0 * Math.PI * dir) / 8.0 # similar to calculation in draw_arrow_dir.
 		else
 			# Draw an arrow pointing away from/towards the origin cell.
@@ -1141,7 +1151,7 @@ class drawstate
 					# sense to the direction.
 					f |= F_ARROW_INPOINT
 					dirp = whichdir(x, y, 0|(state.prev[i] % w), 0|(state.prev[i] / w))
-				@tile_redraw(@border + x * @tilesize, @border + y * @tilesize, state.dirs[i], dirp, state.nums[i], f)
+				@tile_redraw(@border + x * @tilesize, @border + y * @tilesize, state.cells[i].dir, dirp, state.nums[i], f)
 		if ui.dragging
 			@dragging = true
 			@dx = ui.dx - @tilesize/2
