@@ -12,6 +12,12 @@ class DisjointSetForest
 		# remaining 30 bits are the parent, otherwise the remaining 30
 		# bits are the number of elements in the tree.
 
+	clone: ->
+		r = new DisjointSetForest(@size)
+		for value, index in @dsf
+			r.dsf[index] = value
+		r
+
 	canonify: (index) ->
 		@extended_canonify(index, null)[0]
 

@@ -44,43 +44,14 @@ FLAG_ERROR = 2
 
 # --- Game description string generation and unpicking ---
 
-dup_game_to = (to, from) ->
-	to.completed = from.completed
-	to.used_solve = from.used_solve
-	to.impossible = from.impossible
-	memcpy(to.dirs, from.dirs, to.n)
-	memcpy(to.flags, from.flags, to.n)
-	memcpy(to.nums, from.nums, to.n)
-	memcpy(to.next, from.next, to.n)
-	memcpy(to.prev, from.prev, to.n)
-	memcpy(to.dsf, from.dsf, to.n)
-	memcpy(to.numsi, from.numsi, (to.n+1))
-	null
-
-unpick_desc = (params, desc) ->
-	state = new game_state(params.w, params.h)
-	for cell, i in desc.split(',')
-		if ':' in cell
-			[num, dir] = cell.split(':')
-			state.nums[i] = +num
-			state.dirs[i] = +dir
-			state.flags[i] = FLAG_IMMUTABLE
-		else
-			state.dirs[i] = +cell
-			state.flags[i] = 0
-	state
-
-generate_desc = (state, issolve) ->
-	if issolve
-		'S'
-	else
-		descs =
-			for i in [0 .. state.n - 1]
-				if state.nums[i]
-					"#{state.nums[i]}:#{state.dirs[i]}"
-				else
-					"#{state.dirs[i]}"
-		descs.join(',')
+generate_desc = (state) ->
+	descs =
+		for i in [0 .. state.n - 1]
+			if state.nums[i]
+				"#{state.nums[i]}:#{state.dirs[i]}"
+			else
+				"#{state.dirs[i]}"
+	descs.join(',')
 
 
 
@@ -107,9 +78,24 @@ class game_state
 		@numsi.fill(-1)
 		null
 
+	clone_to: (to) ->
+		to.completed = @completed
+		to.used_solve = @used_solve
+		to.impossible = @impossible
+		for i in [0 .. @n - 1]
+			to.dirs[i] = @dirs[i]
+			to.flags[i] = @flags[i]
+			to.nums[i] = @nums[i]
+			to.next[i] = @next[i]
+			to.prev[i] = @prev[i]
+		to.dsf = @dsf.clone()
+		for v, i in @numsi
+			to.numsi[i] = v
+		null
+
 	clone: ->
 		r = new game_state(@w, @h)
-		dup_game_to(r, this)
+		@clone_to(r)
 		r
 
 	in_grid: (x, y) ->
@@ -529,7 +515,7 @@ class game_state
 		else
 			return null
 
-new_game_desc = (params) ->
+new_game = (params) ->
 	state = new game_state(params.w, params.h)
 	for x in [0 .. 50]
 		state.blank()
@@ -550,7 +536,9 @@ new_game_desc = (params) ->
 		# Store the game definition for this, as the solved-state.
 		if state.new_game_strip()
 			state.strip_nums()
-			return generate_desc(state, false)
+			state.update_numbers()
+			state.check_completion(true) # update any auto-links
+			return state
 	throw 'Game generation failed.'
 
 
@@ -646,12 +634,6 @@ compare_heads = (ha, hb) ->
 	return 1 if ha.i < hb.i
 	return 0
 
-new_game = (params, desc) ->
-	state = unpick_desc(params, desc)
-	state.update_numbers()
-	state.check_completion(true) # update any auto-links
-	state
-
 # --- Solver ---
 
 # If a tile has a single tile it can link _to_, or there's only a single
@@ -720,7 +702,7 @@ solve_state = (state) ->
 	while true
 		state.update_numbers()
 		if solve_single(state, copy)
-			dup_game_to(state, copy)
+			copy.clone_to(state)
 			if state.impossible
 				break
 		else
@@ -731,20 +713,6 @@ solve_state = (state) ->
 	else
 		if state.check_completion(false) then 1 else 0
 
-solve_game = (state, currstate) ->
-	tosolve = currstate.clone()
-	result = solve_state(tosolve)
-	if result > 0
-		ret = generate_desc(tosolve, true)
-		return ret if ret
-	tosolve = state.clone()
-	result = solve_state(tosolve)
-	if result < 0
-		throw 'Puzzle is impossible.'
-	else if result == 0
-		throw 'Unable to solve puzzle.'
-	else
-		return generate_desc(tosolve, true)
 
 LEFT_BUTTON = 1
 MIDDLE_BUTTON = 2
@@ -1204,8 +1172,7 @@ class drawstate
 
 window.onload = ->
 	params = new game_params(6, 6, true)
-	desc = new_game_desc(params)
-	state = [unpick_desc(params, desc)]
+	state = [new_game(params)]
 	ui = new game_ui()
 
 
