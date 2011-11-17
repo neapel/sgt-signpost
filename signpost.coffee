@@ -306,7 +306,7 @@ class game_state
 	new_game_strip: ->
 		copy = @clone()
 		copy.strip_nums()
-		return true if solve_state(copy)
+		return true if copy.solve_state()
 		scratch = [0 .. @n - 1]
 		scratch.shuffle()
 		solved = do =>
@@ -324,7 +324,7 @@ class game_state
 				copy.flags[j] |= FLAG_IMMUTABLE
 				@flags[j] |= FLAG_IMMUTABLE
 				copy.strip_nums()
-				cps = solve_state(copy)
+				cps = copy.solve_state()
 				if cps
 					copy = cps
 					return true
@@ -339,7 +339,7 @@ class game_state
 				@flags[j] &= ~FLAG_IMMUTABLE
 				copy = @clone()
 				copy.strip_nums()
-				cps = solve_state(copy)
+				cps = copy.solve_state()
 				if not cps
 					copy.nums[j] = @nums[j]
 					@flags[j] |= FLAG_IMMUTABLE
@@ -507,7 +507,7 @@ class game_state
 					return ret
 			else if move[0] == 'H'
 				ret = @clone()
-				ret = solve_state(ret)
+				ret = ret.solve_state()
 				return ret
 		if new_state
 			new_state.update_numbers()
@@ -516,6 +516,88 @@ class game_state
 			return new_state
 		else
 			return null
+
+	######## Solver #############
+
+	# If a tile has a single tile it can link _to_, or there's only a single
+	# location that can link to a given tile, fill that link in.
+	solve_single: (copy) ->
+		nlinks = 0
+		# The from array is a list of 'which square can link _to_ us';
+		# we start off with from as '-1' (meaning 'not found'); if we find
+		# something that can link to us it is set to that index, and then if
+		# we find another we set it to -2.
+		from = (-1 for index in [1 .. @n])
+		# poss is 'can I link to anything' with the same meanings.
+		for i in [0 .. @n - 1]
+			continue if @next[i] != -1
+			continue if @nums[i] == @n # no next from last no.
+			d = @dirs[i]
+			poss = -1
+			sx = x = 0|(i % @w)
+			sy = y = 0|(i / @w)
+			while true
+				x += dxs[d]
+				y += dys[d]
+				break if not @in_grid(x, y)
+				continue if not @isvalidmove(true, sx, sy, x, y)
+				# can't link to somewhere with a back-link we would have to
+				# break (the solver just doesn't work like this).
+				j = y * @w + x
+				continue if @prev[j] != -1
+				if @nums[i] > 0 and @nums[j] > 0 and @nums[i] <= @n and @nums[j] <= @n and @nums[j] == @nums[i] + 1
+					poss = j
+					from[j] = i
+					break
+				# if there's been a valid move already, we have to move on;
+				# we can't make any deductions here.
+				poss = if poss == -1 then j else -2
+				# Modify the from array as described above (which is enumerating
+				# what points to 'j' in a similar way).
+				from[j] = if from[j] == -1 then i else -2
+			if poss == -2
+				# Multiple next squares
+			else if poss == -1
+				copy.impossible = 1
+				return -1
+			else
+				copy.makelink(i, poss)
+				nlinks++
+		for i in [0 .. @n]
+			continue if @prev[i] != -1
+			continue if @nums[i] == 1 # no prev from 1st no.
+			x = 0|(i % @w)
+			y = 0|(i / @w)
+			if from[i] == -1
+				copy.impossible = 1
+				return -1
+			else if from[i] == -2
+				# Multiple prev squares
+			else
+				copy.makelink(from[i], i)
+				nlinks++
+		return nlinks
+
+	# Returns solved state if solution exists or null
+	solve_state: ->
+		state = @clone()
+		copy = state.clone()
+		while true
+			state.update_numbers()
+			if state.solve_single(copy)
+				state = copy.clone()
+				if state.impossible
+					break
+			else
+				break
+		state.update_numbers()
+		if state.impossible
+			throw 'impossible'
+		else
+			if state.check_completion(false)
+				state
+			else
+				null
 
 new_game = (params) ->
 	state = new game_state(params.w, params.h)
@@ -638,86 +720,7 @@ compare_heads = (ha, hb) ->
 
 # --- Solver ---
 
-# If a tile has a single tile it can link _to_, or there's only a single
-# location that can link to a given tile, fill that link in.
-solve_single = (state, copy) ->
-	w = state.w
-	nlinks = 0
-	# The from array is a list of 'which square can link _to_ us';
-	# we start off with from as '-1' (meaning 'not found'); if we find
-	# something that can link to us it is set to that index, and then if
-	# we find another we set it to -2.
-	from = (-1 for index in [1 .. state.n])
-	# poss is 'can I link to anything' with the same meanings.
-	for i in [0 .. state.n - 1]
-		continue if state.next[i] != -1
-		continue if state.nums[i] == state.n # no next from last no.
-		d = state.dirs[i]
-		poss = -1
-		sx = x = 0|(i % w)
-		sy = y = 0|(i / w)
-		while true
-			x += dxs[d]
-			y += dys[d]
-			break if not state.in_grid(x, y)
-			continue if not state.isvalidmove(true, sx, sy, x, y)
-			# can't link to somewhere with a back-link we would have to
-			# break (the solver just doesn't work like this).
-			j = y * w + x
-			continue if state.prev[j] != -1
-			if state.nums[i] > 0 and state.nums[j] > 0 and state.nums[i] <= state.n and state.nums[j] <= state.n and state.nums[j] == state.nums[i] + 1
-				poss = j
-				from[j] = i
-				break
-			# if there's been a valid move already, we have to move on;
-			# we can't make any deductions here.
-			poss = if poss == -1 then j else -2
-			# Modify the from array as described above (which is enumerating
-			# what points to 'j' in a similar way).
-			from[j] = if from[j] == -1 then i else -2
-		if poss == -2
-			# Multiple next squares
-		else if poss == -1
-			copy.impossible = 1
-			return -1
-		else
-			copy.makelink(i, poss)
-			nlinks++
-	for i in [0 .. state.n]
-		continue if state.prev[i] != -1
-		continue if state.nums[i] == 1 # no prev from 1st no.
-		x = 0|(i % w)
-		y = 0|(i / w)
-		if from[i] == -1
-			copy.impossible = 1
-			return -1
-		else if from[i] == -2
-			# Multiple prev squares
-		else
-			copy.makelink(from[i], i)
-			nlinks++
-	return nlinks
 
-# Returns 1 if we managed to solve it, 0 otherwise.
-solve_state = (rd_state) ->
-	state = rd_state.clone()
-	copy = state.clone()
-	while true
-		state.update_numbers()
-		if solve_single(state, copy)
-			state = copy.clone()
-			if state.impossible
-				break
-		else
-			break
-	state.update_numbers()
-	if state.impossible
-		throw 'impossible'
-	else
-		if state.check_completion(false)
-			state
-		else
-			null
 
 
 LEFT_BUTTON = 1
