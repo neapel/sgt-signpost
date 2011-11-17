@@ -915,56 +915,16 @@ COL_CURSOR = '#000'
 COL_DRAG_ORIGIN = 'blue'
 COL_ERROR = 'red'
 
-class drawstate
-	constructor: (state) ->
-		@tilesize = 40
-		@border = @tilesize/2
-		@started = @solved = 0
-		@w = state.w
-		@h = state.h
-		@n = state.n
-		@nums = (0 for x in [1 .. @n])
-		@dirp = (-1 for x in [1 .. @n])
-		@f = (0 for x in [1 .. @n])
-		@dragging = @dx = @dy = 0
-		@dragb = null
-		@ARROW_HALFSZ = 7 * @tilesize / 32
-
-	COORD: (x) ->
-		x * @tilesize + @border
-
-	FROMCOORD: (x) ->
-		0|((x - @border + @tilesize) / @tilesize) - 1
 
 
-draw_rect = (dr, x, y, w, h, color) ->
-	dr.fillStyle = color
-	dr.fillRect(x, y, w, h)
+F_CUR = 0x001 # Cursor on this tile.
+F_DRAG_SRC = 0x002 # Tile is source of a drag.
+F_ERROR = 0x004 # Tile marked in error.
+F_IMMUTABLE = 0x008 # Tile (number) is immutable.
+F_ARROW_POINT = 0x010 # Tile points to other tile
+F_ARROW_INPOINT = 0x020 # Other tile points in here.
+F_DIM = 0x040 # Tile is dim
 
-draw_rect_outline = (dr, x, y, w, h, color) ->
-	dr.strokeStyle = color
-	dr.strokeRect(x, y, w, h)
-
-draw_rect_corners = (dr, x, y, s, color) ->
-	dr.beginPath()
-	b = s / 2
-	for i in [0 .. 3]
-		dr.save()
-		dr.translate x, y
-		dr.rotate i * Math.PI / 2
-		dr.moveTo s, s - b
-		dr.lineTo s, s
-		dr.lineTo s - b, s
-		dr.restore()
-	dr.strokeStyle = color
-	dr.stroke()
-
-
-draw_circle = (dr, x, y, r, fcolor, scolor) ->
-	dr.beginPath()
-	dr.arc x, y, r, 0, 2 * Math.PI, false
-	dr.fillStyle = fcolor
-	dr.fill()
 
 set_color = (set) ->
 	hue = 0
@@ -992,232 +952,244 @@ mid = (a, b) ->
 dimbg = (a) ->
 	dim(a, COL_BACKGROUND)
 
-# cx, cy are top-left corner. sz is the 'radius' of the arrow.
-# ang is in radians, clockwise from 0 == straight up.
-draw_arrow = (dr, cx, cy, sz, ang, cfill, cout) ->
-	dr.save()
-	dr.translate(cx, cy)
-	dr.rotate(ang)
-	xdx3 = (sz * (1.0/3 + 1) + 0.5) - sz
-	xdy3 = 0.5
-	xdx = sz + 0.5
-	xdy = 0.5
-	ydx = -xdy
-	ydy = xdx
-	dr.beginPath()
-	dr.moveTo -ydx, -ydy
-	dr.lineTo xdx, xdy
-	dr.lineTo xdx3, xdy3
-	dr.lineTo xdx3 + ydx, xdy3 + ydy
-	dr.lineTo -xdx3 + ydx, -xdy3 + ydy
-	dr.lineTo -xdx3, -xdy3
-	dr.lineTo -xdx, -xdy
-	dr.fillStyle = cfill
-	dr.fill()
-	dr.restore()
-	null
 
-draw_arrow_dir = (dr, cx, cy, sz, dir, cfill, cout) ->
-	ang = 2.0 * Math.PI * dir / 8.0
-	draw_arrow(dr, cx, cy, sz, ang, cfill, cout)
-	null
+class drawstate
+	constructor: (@dr, state) ->
+		@tilesize = 40
+		@border = @tilesize/2
+		@ARROW_HALFSZ = 7 * @tilesize / 32
+		@n = state.n
+		@dragging = @dx = @dy = 0
 
-# cx, cy are centre coordinates..
-draw_star = (dr, cx, cy, rad, npoints, cfill, cout) ->
-	dr.save()
-	dr.translate(cx, cy)
-	fun = 'moveTo'
-	dr.beginPath()
-	for n in [0 .. npoints * 2 - 1]
-		a = 2.0 * Math.PI * (n / (npoints * 2.0))
-		r = if 0|(n % 2) then rad/2.0 else rad
-		# We're rotating the poat (0, -r) by a degrees
-		dr[fun](r * Math.sin(a), -r * Math.cos(a))
-		fun = 'lineTo'
-	dr.fillStyle = cfill
-	dr.fill()
-	dr.restore()
-	null
+	COORD: (x) ->
+		x * @tilesize + @border
 
+	FROMCOORD: (x) ->
+		0|((x - @border + @tilesize) / @tilesize) - 1
 
+	# cx, cy are top-left corner. sz is the 'radius' of the arrow.
+	# ang is in radians, clockwise from 0 == straight up.
+	draw_arrow: (cx, cy, sz, ang, cfill) ->
+		@dr.save()
+		@dr.translate cx, cy
+		@dr.rotate ang
+		xdx3 = (sz * (1.0/3 + 1) + 0.5) - sz
+		xdy3 = 0.5
+		xdx = sz + 0.5
+		xdy = 0.5
+		ydx = -xdy
+		ydy = xdx
+		@dr.beginPath()
+		@dr.moveTo -ydx, -ydy
+		@dr.lineTo xdx, xdy
+		@dr.lineTo xdx3, xdy3
+		@dr.lineTo xdx3 + ydx, xdy3 + ydy
+		@dr.lineTo -xdx3 + ydx, -xdy3 + ydy
+		@dr.lineTo -xdx3, -xdy3
+		@dr.lineTo -xdx, -xdy
+		@dr.fillStyle = cfill
+		@dr.fill()
+		@dr.restore()
+		null
 
+	# cx, cy are centre coordinates..
+	draw_star: (cx, cy, rad, npoints, cfill) ->
+		@dr.save()
+		@dr.translate(cx, cy)
+		fun = 'moveTo'
+		@dr.beginPath()
+		for n in [0 .. npoints * 2 - 1]
+			a = 2.0 * Math.PI * (n / (npoints * 2.0))
+			r = if 0|(n % 2) then rad/2.0 else rad
+			# We're rotating the poat (0, -r) by a degrees
+			@dr[fun](r * Math.sin(a), -r * Math.cos(a))
+			fun = 'lineTo'
+		@dr.fillStyle = cfill
+		@dr.fill()
+		@dr.restore()
+		null
 
-F_CUR = 0x001 # Cursor on this tile.
-F_DRAG_SRC = 0x002 # Tile is source of a drag.
-F_ERROR = 0x004 # Tile marked in error.
-F_IMMUTABLE = 0x008 # Tile (number) is immutable.
-F_ARROW_POINT = 0x010 # Tile points to other tile
-F_ARROW_INPOINT = 0x020 # Other tile points in here.
-F_DIM = 0x040 # Tile is dim
-
-tile_redraw = (dr, ds, tx, ty, dir, dirp, num, f) ->
-	cb = ds.tilesize / 16
-	empty = false
-	if num == 0 and not (f & F_ARROW_POINT) and not (f & F_ARROW_INPOINT)
-		empty = true
-		# We don't display text in empty cells: typically these are
-		# signified by num=0. However, in some cases a cell could
-		# have had the number 0 assigned to it if the user made an
-		# error (e.g. tried to connect a chain of length 5 to the
-		# immutable number 4) so we _do_ display the 0 if the cell
-		# has a link in or a link out.
-	# Calculate colours.
-	setcol = if empty then COL_BACKGROUND else num2col(ds, num)
-	arrowcol =
-		if f & F_DRAG_SRC
-			COL_DRAG_ORIGIN
-		else if f & F_DIM
-			dim(COL_ARROW, setcol)
-		else if f & F_ARROW_POINT
-			mid(COL_ARROW, setcol)
-		else 
-			COL_ARROW
-	textcol =
-		if (f & F_ERROR) and not (f & F_IMMUTABLE)
-			COL_ERROR
-		else
-			_textcol = if f & F_IMMUTABLE then COL_NUMBER_SET else COL_NUMBER
-			if f & F_DIM
-				dim(_textcol, setcol)
-			else if ((f & F_ARROW_POINT) or num==ds.n) and ((f & F_ARROW_INPOINT) or num==1)
-				mid(_textcol, setcol)
+	tile_redraw: (tx, ty, dir, dirp, num, f) ->
+		cb = @tilesize / 16
+		empty = false
+		if num == 0 and not (f & F_ARROW_POINT) and not (f & F_ARROW_INPOINT)
+			empty = true
+			# We don't display text in empty cells: typically these are
+			# signified by num=0. However, in some cases a cell could
+			# have had the number 0 assigned to it if the user made an
+			# error (e.g. tried to connect a chain of length 5 to the
+			# immutable number 4) so we _do_ display the 0 if the cell
+			# has a link in or a link out.
+		# Calculate colours.
+		setcol = if empty then COL_BACKGROUND else num2col(this, num)
+		arrowcol =
+			if f & F_DRAG_SRC
+				COL_DRAG_ORIGIN
+			else if f & F_DIM
+				dim(COL_ARROW, setcol)
+			else if f & F_ARROW_POINT
+				mid(COL_ARROW, setcol)
+			else 
+				COL_ARROW
+		textcol =
+			if (f & F_ERROR) and not (f & F_IMMUTABLE)
+				COL_ERROR
 			else
-				_textcol
-	sarrowcol = if f & F_DIM then dim(COL_ARROW, setcol) else COL_ARROW
-	# Clear tile background
-	draw_rect(dr, tx, ty, ds.tilesize, ds.tilesize, if f & F_DIM then dimbg(setcol) else setcol)
-	# Draw large (outwards-pointing) arrow.
-	asz = ds.ARROW_HALFSZ # 'radius' of arrow/star.
-	acx = tx + ds.tilesize/2 + asz # centre x
-	acy = ty + ds.tilesize/2 + asz # centre y
-	if num == ds.n and (f & F_IMMUTABLE)
-		draw_star(dr, acx, acy, asz, 5, arrowcol, arrowcol)
-	else
-		draw_arrow_dir(dr, acx, acy, asz, dir, arrowcol, arrowcol)
-	if f & F_CUR
-		draw_rect_corners(dr, acx, acy, asz+1, COL_CURSOR)
-	# Draw dot iff this tile requires a predecessor and doesn't have one.
-	acx = tx + ds.tilesize/2 - asz
-	acy = ty + ds.tilesize/2 + asz
-	if not (f & F_ARROW_INPOINT) and num != 1
-		draw_circle(dr, acx, acy, asz / 4, sarrowcol, sarrowcol)
-	# Draw text (number or set).
-	if not empty
-		set = if num <= 0 then 0 else 0|(num / (ds.n + 1))
-		buf = ''
-		if set == 0 or num <= 0
-			buf = "#{num}"
-		else
-			while set > 0
-				set--
-				buf += ALPHABET[0|(set % ALPHABET.length)]
-				set = 0|(set / 26)
-			n = 0|(num % (ds.n + 1))
-			if n != 0
-				buf += "+#{n}"
-		dr.save()
-		dr.font = "#{ds.tilesize/3}px sans-serif"
-		dr.fillStyle = textcol
-		dr.fillText(buf, tx + cb, ty + ds.tilesize * 0.4)
-		dr.restore()
-	draw_rect_outline(dr, tx, ty, ds.tilesize, ds.tilesize, COL_GRID)
-	null
-
-draw_drag_indicator = (dr, ds, state, ui, validdrag) ->
-	w = ds.w
-	acol = COL_ARROW
-	fx = ds.FROMCOORD(ui.dx)
-	fy = ds.FROMCOORD(ui.dy)
-	if validdrag
-		# If we could move here, lock the arrow to the appropriate direction.
-		dir = if ui.drag_is_from then state.dirs[ui.sy*w+ui.sx] else state.dirs[fy*w+fx]
-		ang = (2.0 * Math.PI * dir) / 8.0 # similar to calculation in draw_arrow_dir.
-	else
-		# Draw an arrow pointing away from/towards the origin cell.
-		ox = ds.COORD(ui.sx) + ds.tilesize/2
-		oy = ds.COORD(ui.sy) + ds.tilesize/2
-		xdiff = Math.abs(ox - ui.dx)
-		ydiff = Math.abs(oy - ui.dy)
-		ang =
-			if xdiff == 0
-				if oy > ui.dy then 0 else Math.PI
-			else if ydiff == 0
-				if ox > ui.dx then 3 * Math.PI / 2 else Math.PI / 2
-			else
-				if ui.dx > ox and ui.dy < oy
-					tana = xdiff / ydiff
-					offset = 0
-				else if ui.dx > ox and ui.dy > oy
-					tana = ydiff / xdiff
-					offset = Math.PI / 2
-				else if ui.dx < ox and ui.dy > oy
-					tana = xdiff / ydiff
-					offset = Math.PI
+				_textcol = if f & F_IMMUTABLE then COL_NUMBER_SET else COL_NUMBER
+				if f & F_DIM
+					dim(_textcol, setcol)
+				else if ((f & F_ARROW_POINT) or num == @n) and ((f & F_ARROW_INPOINT) or num == 1)
+					mid(_textcol, setcol)
 				else
-					tana = ydiff / xdiff
-					offset = 3 * Math.PI / 2
-				Math.atan(tana) + offset
-		if not ui.drag_is_from
-			ang += Math.PI # poto origin, not away from.
-	draw_arrow(dr, ui.dx, ui.dy, ds.ARROW_HALFSZ, ang, acol, acol)
-	null
+					_textcol
+		sarrowcol = if f & F_DIM then dim(COL_ARROW, setcol) else COL_ARROW
+		# Clear tile background
+		@dr.fillStyle = if f & F_DIM then dimbg(setcol) else setcol
+		@dr.fillRect(tx, ty, @tilesize, @tilesize)
+		# Draw large (outwards-pointing) arrow.
+		asz = @ARROW_HALFSZ # 'radius' of arrow/star.
+		acx = tx + @tilesize/2 + asz # centre x
+		acy = ty + @tilesize/2 + asz # centre y
+		if num == @n and (f & F_IMMUTABLE)
+			@draw_star(acx, acy, asz, 5, arrowcol)
+		else
+			ang = 2.0 * Math.PI * dir / 8.0
+			@draw_arrow(acx, acy, asz, ang, arrowcol)
+		if f & F_CUR
+			@dr.beginPath()
+			s = asz + 1
+			b = s / 2
+			for i in [0 .. 3]
+				@dr.save()
+				@dr.translate acx, acy
+				@dr.rotate i * Math.PI / 2
+				@dr.moveTo s, s - b
+				@dr.lineTo s, s
+				@dr.lineTo s - b, s
+				@dr.restore()
+			@dr.strokeStyle = COL_CURSOR
+			@dr.stroke()
+		# Draw dot iff this tile requires a predecessor and doesn't have one.
+		acx = tx + @tilesize/2 - asz
+		acy = ty + @tilesize/2 + asz
+		if not (f & F_ARROW_INPOINT) and num != 1
+			@dr.beginPath()
+			@dr.arc acx, acy, asz / 4, 0, 2 * Math.PI, false
+			@dr.fillStyle = sarrowcol
+			@dr.fill()
+		# Draw text (number or set).
+		if not empty
+			set = if num <= 0 then 0 else 0|(num / (@n + 1))
+			buf = ''
+			if set == 0 or num <= 0
+				buf = "#{num}"
+			else
+				while set > 0
+					set--
+					buf += ALPHABET[0|(set % ALPHABET.length)]
+					set = 0|(set / 26)
+				n = 0|(num % (@n + 1))
+				if n != 0
+					buf += "+#{n}"
+			@dr.save()
+			@dr.font = "#{@tilesize/3}px sans-serif"
+			@dr.fillStyle = textcol
+			@dr.fillText(buf, tx + cb, ty + @tilesize * 0.4)
+			@dr.restore()
+		@dr.strokeStyle = COL_GRID
+		@dr.strokeRect(tx, ty, @tilesize, @tilesize)
+		null
 
-game_redraw = (dr, ds, state, ui) ->
-	w = ds.w
-	postdrop = null
-	# If an in-progress drag would make a valid move if finished, we
-	# reflect that move in the board display. We let interpret_move do
-	# most of the heavy lifting for us: we have to copy the game_ui so
-	# as not to stomp on the real UI's drag state.
-	if ui.dragging
-		uicopy = ui.clone()
-		movestr = uicopy.interpret_move(state, ds, ui.dx, ui.dy, LEFT_RELEASE)
-		if movestr
-			state = postdrop = state.execute_move(movestr)
-	if not ds.started
-		aw = ds.tilesize * state.w
-		ah = ds.tilesize * state.h
-		draw_rect(dr, 0, 0, aw + 2 * ds.border, ah + 2 * ds.border, COL_BACKGROUND)
-		draw_rect_outline(dr, ds.border - 1, ds.border - 1, aw + 2, ah + 2, COL_GRID)
-	for x in [0 .. state.w - 1]
-		for y in [0 .. state.h - 1]
-			i = y*w + x
-			f = 0
-			dirp = -1
-			if ui.cshow and x == ui.cx and y == ui.cy
-				f |= F_CUR
-			if ui.dragging
-				if x == ui.sx and y == ui.sy
-					f |= F_DRAG_SRC
-				else if ui.drag_is_from
-					if not state.ispointing(ui.sx, ui.sy, x, y)
+	draw_drag_indicator: (state, ui, validdrag) ->
+		w = state.w
+		acol = COL_ARROW
+		fx = @FROMCOORD(ui.dx)
+		fy = @FROMCOORD(ui.dy)
+		if validdrag
+			# If we could move here, lock the arrow to the appropriate direction.
+			dir = if ui.drag_is_from then state.dirs[ui.sy*w+ui.sx] else state.dirs[fy*w+fx]
+			ang = (2.0 * Math.PI * dir) / 8.0 # similar to calculation in draw_arrow_dir.
+		else
+			# Draw an arrow pointing away from/towards the origin cell.
+			ox = @COORD(ui.sx) + @tilesize/2
+			oy = @COORD(ui.sy) + @tilesize/2
+			xdiff = Math.abs(ox - ui.dx)
+			ydiff = Math.abs(oy - ui.dy)
+			ang =
+				if xdiff == 0
+					if oy > ui.dy then 0 else Math.PI
+				else if ydiff == 0
+					if ox > ui.dx then 3 * Math.PI / 2 else Math.PI / 2
+				else
+					if ui.dx > ox and ui.dy < oy
+						tana = xdiff / ydiff
+						offset = 0
+					else if ui.dx > ox and ui.dy > oy
+						tana = ydiff / xdiff
+						offset = Math.PI / 2
+					else if ui.dx < ox and ui.dy > oy
+						tana = xdiff / ydiff
+						offset = Math.PI
+					else
+						tana = ydiff / xdiff
+						offset = 3 * Math.PI / 2
+					Math.atan(tana) + offset
+			if not ui.drag_is_from
+				ang += Math.PI # poto origin, not away from.
+		@draw_arrow(ui.dx, ui.dy, @ARROW_HALFSZ, ang, acol)
+		null
+
+	game_redraw: (state, ui) ->
+		w = state.w
+		postdrop = null
+		# If an in-progress drag would make a valid move if finished, we
+		# reflect that move in the board display. We let interpret_move do
+		# most of the heavy lifting for us: we have to copy the game_ui so
+		# as not to stomp on the real UI's drag state.
+		if ui.dragging
+			uicopy = ui.clone()
+			movestr = uicopy.interpret_move(state, this, ui.dx, ui.dy, LEFT_RELEASE)
+			if movestr
+				state = postdrop = state.execute_move(movestr)
+		aw = @tilesize * state.w
+		ah = @tilesize * state.h
+		@dr.fillStyle = COL_BACKGROUND
+		@dr.fillRect(0, 0, aw + 2 * @border, ah + 2 * @border)
+		@dr.strokeStyle = COL_GRID
+		@dr.strokeRect(@border - 1, @border - 1, aw + 2, ah + 2)
+		for x in [0 .. state.w - 1]
+			for y in [0 .. state.h - 1]
+				i = y*w + x
+				f = 0
+				dirp = -1
+				if ui.cshow and x == ui.cx and y == ui.cy
+					f |= F_CUR
+				if ui.dragging
+					if x == ui.sx and y == ui.sy
+						f |= F_DRAG_SRC
+					else if ui.drag_is_from
+						if not state.ispointing(ui.sx, ui.sy, x, y)
+							f |= F_DIM
+					else if not state.ispointing(x, y, ui.sx, ui.sy)
 						f |= F_DIM
-				else if not state.ispointing(x, y, ui.sx, ui.sy)
-					f |= F_DIM
-			if state.impossible or state.nums[i] < 0 or state.flags[i] & FLAG_ERROR
-				f |= F_ERROR
-			if state.flags[i] & FLAG_IMMUTABLE
-				f |= F_IMMUTABLE
-			if state.next[i] != -1
-				f |= F_ARROW_POINT
-			if state.prev[i] != -1
-				# Currently the direction here is from our square _back_
-				# to its previous. We could change this to give the opposite
-				# sense to the direction.
-				f |= F_ARROW_INPOINT
-				dirp = whichdir(x, y, 0|(state.prev[i] % w), 0|(state.prev[i] / w))
-			if state.nums[i] != ds.nums[i] or f != ds.f[i] or dirp != ds.dirp[i] or !ds.started or true
-				tile_redraw(dr, ds, ds.border + x * ds.tilesize, ds.border + y * ds.tilesize, state.dirs[i], dirp, state.nums[i], f)
-				ds.nums[i] = state.nums[i]
-				ds.f[i] = f
-				ds.dirp[i] = dirp
-	if ui.dragging
-		ds.dragging = true
-		ds.dx = ui.dx - ds.tilesize/2
-		ds.dy = ui.dy - ds.tilesize/2
-		draw_drag_indicator(dr, ds, state, ui, postdrop?)
-	if not ds.started
-		ds.started = true
+				if state.impossible or state.nums[i] < 0 or state.flags[i] & FLAG_ERROR
+					f |= F_ERROR
+				if state.flags[i] & FLAG_IMMUTABLE
+					f |= F_IMMUTABLE
+				if state.next[i] != -1
+					f |= F_ARROW_POINT
+				if state.prev[i] != -1
+					# Currently the direction here is from our square _back_
+					# to its previous. We could change this to give the opposite
+					# sense to the direction.
+					f |= F_ARROW_INPOINT
+					dirp = whichdir(x, y, 0|(state.prev[i] % w), 0|(state.prev[i] / w))
+				@tile_redraw(@border + x * @tilesize, @border + y * @tilesize, state.dirs[i], dirp, state.nums[i], f)
+		if ui.dragging
+			@dragging = true
+			@dx = ui.dx - @tilesize/2
+			@dy = ui.dy - @tilesize/2
+			@draw_drag_indicator(state, ui, postdrop?)
 
 
 
@@ -1227,22 +1199,23 @@ window.onload = ->
 	desc = new_game_desc(params)
 	state = [unpick_desc(params, desc)]
 	ui = new game_ui()
-	ds = new drawstate(state[0])
+
 
 	canvas = document.createElement 'canvas'
 	document.body.appendChild canvas
 	canvas.width = 300
 	canvas.height = 300
 	ctx = canvas.getContext '2d'
+	ds = new drawstate(ctx, state[0])
 
-	game_redraw(ctx, ds, state[0], ui)
+	ds.game_redraw(state[0], ui)
 
 	make_move = (button, x, y) ->
 		mov = ui.interpret_move(state[0], ds, x, y, button)
 		if mov
 			new_state = state[0].execute_move(mov)
 			state.unshift(new_state)
-		game_redraw(ctx, ds, state[0], ui)
+		ds.game_redraw(state[0], ui)
 
 
 	window.onkeydown = (event) ->
@@ -1268,12 +1241,17 @@ window.onload = ->
 			when 85 # u: undo
 				if state.length > 1
 					state.shift()
-					game_redraw(ctx, ds, state[0], ui)
+					ds.game_redraw(state[0], ui)
 					event.preventDefault()
+
+	canvas.oncontextmenu = (event) ->
+		event.stopImmediatePropagation()
+		event.preventDefault()
 
 	mouse_is_down = false
 	canvas.onmousedown = (event) ->
 		mouse_is_down = true
+		event.stopImmediatePropagation()
 		event.preventDefault()
 		x = event.clientX
 		y = event.clientY
@@ -1287,6 +1265,7 @@ window.onload = ->
 		
 	canvas.onmouseup = (event) ->
 		mouse_is_down = false
+		event.stopImmediatePropagation()
 		event.preventDefault()
 		x = event.clientX
 		y = event.clientY
