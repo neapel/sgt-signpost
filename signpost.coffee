@@ -8,18 +8,18 @@ class game_params
 		throw 'One must at least be 3' if @w == 2 and @h == 2
 		null
 
-DIR_N = 0
-DIR_NE = 1
-DIR_E = 2
-DIR_SE = 3
-DIR_S = 4
-DIR_SW = 5
-DIR_W = 6
-DIR_NW = 7
 DIR_MAX = 8
-dirstrings = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
-dxs = [  0,  1, 1, 1, 0, -1, -1, -1 ]
-dys = [ -1, -1, 0, 1, 1,  1,  0, -1 ]
+
+DIRECTION = [
+	{x:  0, y: -1} # N
+	{x:  1, y: -1} # NE
+	{x:  1, y:  0} # E
+	{x:  1, y:  1} # SE
+	{x:  0, y:  1} # S
+	{x: -1, y:  1} # SW
+	{x: -1, y:  0} # W
+	{x: -1, y: -1} # NW
+]
 
 DIR_OPPOSITE = (d) -> 0|((d + 4) % 8)
 
@@ -32,30 +32,13 @@ whichdir = (fromx, fromy, tox, toy) ->
 		dx = dx / Math.abs(dx) # limit to (-1, 0, 1)
 	if dy
 		dy = dy / Math.abs(dy) # ditto
-	for i in [0 .. DIR_MAX - 1]
-		if dx == dxs[i] and dy == dys[i]
+	for dir, i in DIRECTION
+		if dx == dir.x and dy == dir.y
 			return i
 	return -1
 
 FLAG_IMMUTABLE = 1
 FLAG_ERROR = 2
-
-# Generally useful functions
-
-
-# --- Game description string generation and unpicking ---
-
-generate_desc = (state) ->
-	descs =
-		for i in [0 .. state.n - 1]
-			if state.nums[i]
-				"#{state.nums[i]}:#{state.dirs[i]}"
-			else
-				"#{state.dirs[i]}"
-	descs.join(',')
-
-
-
 
 class game_state
 	constructor: (@w, @h) ->
@@ -123,8 +106,8 @@ class game_state
 				return false
 			if fromx == tox and fromy == toy
 				return true
-			fromx += dxs[dir]
-			fromy += dys[dir]
+			fromx += DIRECTION[dir].x
+			fromy += DIRECTION[dir].y
 		null # not reached
 
 	ispointingi: (fromi, toi) ->
@@ -215,14 +198,12 @@ class game_state
 		adjacent = []
 		sx = 0|(i % @w)
 		sy = 0|(i / @w)
-		for a in [0 .. DIR_MAX - 1]
+		for dir, a in DIRECTION
 			x = sx
 			y = sy
-			dx = dxs[a]
-			dy = dys[a]
 			while true
-				x += dx
-				y += dy
+				x += dir.x
+				y += dir.y
 				break unless @in_grid(x, y)
 				newi = y * @w + x
 				if @nums[newi] == 0
@@ -537,8 +518,8 @@ class game_state
 			sx = x = 0|(i % @w)
 			sy = y = 0|(i / @w)
 			while true
-				x += dxs[d]
-				y += dys[d]
+				x += DIRECTION[d].x
+				y += DIRECTION[d].y
 				break if not @in_grid(x, y)
 				continue if not @isvalidmove(true, sx, sy, x, y)
 				# can't link to somewhere with a back-link we would have to
