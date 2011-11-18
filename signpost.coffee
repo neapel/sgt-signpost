@@ -69,6 +69,7 @@ class Cell
 		@num = 0
 		@flag = 0
 		@next = -1
+		@prev = -1
 
 	clone: ->
 		c = new Cell()
@@ -76,6 +77,7 @@ class Cell
 		c.num = @num
 		c.flag = @flag
 		c.next = @next
+		c.prev = @prev
 		c
 
 class game_state
@@ -84,10 +86,8 @@ class game_state
 		@completed = @used_solve = @impossible = false #int
 		@cells = for i in [0 .. @n - 1]
 			new Cell()
-		@prev = snewn(@n) # links to other cell indexes, size n (-1 absent)
 		@dsf = new DisjointSetForest(@n) # connects regions with a dsf.
 		@numsi = snewn(@n + 1) # for each number, which index is it in? (-1 absent)
-		@prev.fill(-1)
 		@numsi.fill(-1)
 
 	clone: ->
@@ -97,8 +97,6 @@ class game_state
 		to.impossible = @impossible
 		to.cells = for c in @cells
 			c.clone()
-		for i in [0 .. @n - 1]
-			to.prev[i] = @prev[i]
 		to.dsf = @dsf.clone()
 		for v, i in @numsi
 			to.numsi[i] = v
@@ -156,7 +154,7 @@ class game_state
 			# no gap, so the only allowable move is that that directly
 			# links the two numbers.
 			@cells[i].num != num + d
-		else if @prev[i] == -1 and @cells[i].next == -1
+		else if @cells[i].prev == -1 and @cells[i].next == -1
 			true # single unconnected square, always OK
 		else
 			@dsf.size(i) <= gap
@@ -189,19 +187,19 @@ class game_state
 
 	makelink: (from, to) ->
 		if @cells[from].next != -1
-			@prev[@cells[from].next] = -1
+			@cells[@cells[from].next].prev = -1
 		@cells[from].next = to
-		if @prev[to] != -1
-			@cells[@prev[to]].next = -1
-		@prev[to] = from
+		if @cells[to].prev != -1
+			@cells[@cells[to].prev].next = -1
+		@cells[to].prev = from
 		null
 
 	unlink_cell: (si) ->
-		if @prev[si] != -1
-			@cells[@prev[si]].next = -1
-			@prev[si] = -1
+		if @cells[si].prev != -1
+			@cells[@cells[si].prev].next = -1
+			@cells[si].prev = -1
 		if @cells[si].next != -1
-			@prev[@cells[si].next] = -1
+			@cells[@cells[si].next].prev = -1
 			@cells[si].next = -1
 		null
 
@@ -209,8 +207,7 @@ class game_state
 		for c in @cells
 			if not (c.flag & FLAG_IMMUTABLE)
 				c.num = 0
-			c.next = -1
-		@prev.fill(-1)
+			c.next = c.prev = -1
 		@numsi.fill(-1)
 		@dsf.constructor(@n)
 		null
@@ -402,12 +399,12 @@ class game_state
 		for i in [0 .. @n - 1]
 			if @cells[i].flag & FLAG_IMMUTABLE
 				@numsi[@cells[i].num] = i
-			else if @prev[i] == -1 and @cells[i].next == -1
+			else if @cells[i].prev == -1 and @cells[i].next == -1
 				@cells[i].num = 0
 		@connect_numbers()
 		# Construct an array of the heads of all current regions, together
 		# with their preferred colours.
-		heads = for i in [0 .. @n - 1] when not (@prev[i] != -1 or @cells[i].next == -1)
+		heads = for i in [0 .. @n - 1] when not (@cells[i].prev != -1 or @cells[i].next == -1)
 			# Look for a cell that is the start of a chain
 			# (has a next but no prev).
 			new head_meta(this, i)
@@ -477,7 +474,7 @@ class game_state
 					@makelink(@numsi[n], @numsi[n+1])
 		# Search and mark numbers less than 0, or 0 with links.
 		for n in [1 .. @n - 1]
-			if @cells[n].num < 0 or (@cells[n].num == 0 and (@cells[n].next != -1 or @prev[n] != -1))
+			if @cells[n].num < 0 or (@cells[n].num == 0 and (@cells[n].next != -1 or @cells[n].prev != -1))
 				error = true
 				if mark_errors
 					@cells[n].flag |= FLAG_ERROR
@@ -498,7 +495,7 @@ class game_state
 				if not @in_grid(sx, sy)
 					return null
 				si = sy * @w + sx
-				return null if @prev[si] == -1 and @cells[si].next == -1
+				return null if @cells[si].prev == -1 and @cells[si].next == -1
 				if c == 'C'
 					# Unlink the single cell we dragged from the board.
 					ret = @clone()
@@ -552,7 +549,7 @@ class game_state
 				# can't link to somewhere with a back-link we would have to
 				# break (the solver just doesn't work like this).
 				j = y * @w + x
-				continue if @prev[j] != -1
+				continue if @cells[j].prev != -1
 				if @cells[i].num > 0 and @cells[j].num > 0 and @cells[i].num <= @n and @cells[j].num <= @n and @cells[j].num == @cells[i].num + 1
 					poss = j
 					from[j] = i
@@ -571,8 +568,8 @@ class game_state
 			else
 				copy.makelink(i, poss)
 				nlinks++
-		for i in [0 .. @n]
-			continue if @prev[i] != -1
+		for i in [0 .. @n - 1]
+			continue if @cells[i].prev != -1
 			continue if @cells[i].num == 1 # no prev from 1st no.
 			x = 0|(i % @w)
 			y = 0|(i / @w)
@@ -831,7 +828,7 @@ class game_ui
 				null # single click
 			else if not state.in_grid(x, y)
 				si = @sy * w + @sx
-				if state.prev[si] == -1 and state.cells[si].next == -1
+				if state.cells[si].prev == -1 and state.cells[si].next == -1
 					null
 				else
 					[(if @drag_is_from then 'C' else 'X'), @sx, @sy]
@@ -847,7 +844,7 @@ class game_ui
 					['L', x, y, @sx, @sy]
 		else if (button == 'x' or button == 'X') and @cshow
 			si = @cy * w + @cx
-			if state.prev[si] == -1 and state.cells[si].next == -1
+			if state.cells[si].prev == -1 and state.cells[si].next == -1
 				null
 			else
 				[(if button == 'x' then 'C' else 'X'), @cx, @cy]
@@ -1143,12 +1140,12 @@ class drawstate
 					f |= F_IMMUTABLE
 				if state.cells[i].next != -1
 					f |= F_ARROW_POINT
-				if state.prev[i] != -1
+				if state.cells[i].prev != -1
 					# Currently the direction here is from our square _back_
 					# to its previous. We could change this to give the opposite
 					# sense to the direction.
 					f |= F_ARROW_INPOINT
-					dirp = whichdir(x, y, 0|(state.prev[i] % w), 0|(state.prev[i] / w))
+					dirp = whichdir(x, y, 0|(state.cells[i].prev % w), 0|(state.cells[i].prev / w))
 				@tile_redraw(@border + x * @tilesize, @border + y * @tilesize, state.cells[i].dir, dirp, state.cells[i].num, f)
 		if ui.dragging
 			@dragging = true
