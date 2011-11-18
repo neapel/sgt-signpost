@@ -68,12 +68,14 @@ class Cell
 		@dir = 0
 		@num = 0
 		@flag = 0
+		@next = -1
 
 	clone: ->
 		c = new Cell()
 		c.dir = @dir
 		c.num = @num
 		c.flag = @flag
+		c.next = @next
 		c
 
 class game_state
@@ -82,11 +84,9 @@ class game_state
 		@completed = @used_solve = @impossible = false #int
 		@cells = for i in [0 .. @n - 1]
 			new Cell()
-		@next = snewn(@n)
 		@prev = snewn(@n) # links to other cell indexes, size n (-1 absent)
 		@dsf = new DisjointSetForest(@n) # connects regions with a dsf.
 		@numsi = snewn(@n + 1) # for each number, which index is it in? (-1 absent)
-		@next.fill(-1)
 		@prev.fill(-1)
 		@numsi.fill(-1)
 
@@ -98,7 +98,6 @@ class game_state
 		to.cells = for c in @cells
 			c.clone()
 		for i in [0 .. @n - 1]
-			to.next[i] = @next[i]
 			to.prev[i] = @prev[i]
 		to.dsf = @dsf.clone()
 		for v, i in @numsi
@@ -157,7 +156,7 @@ class game_state
 			# no gap, so the only allowable move is that that directly
 			# links the two numbers.
 			@cells[i].num != num + d
-		else if @prev[i] == -1 and @next[i] == -1
+		else if @prev[i] == -1 and @cells[i].next == -1
 			true # single unconnected square, always OK
 		else
 			@dsf.size(i) <= gap
@@ -189,28 +188,28 @@ class game_state
 			true
 
 	makelink: (from, to) ->
-		if @next[from] != -1
-			@prev[@next[from]] = -1
-		@next[from] = to
+		if @cells[from].next != -1
+			@prev[@cells[from].next] = -1
+		@cells[from].next = to
 		if @prev[to] != -1
-			@next[@prev[to]] = -1
+			@cells[@prev[to]].next = -1
 		@prev[to] = from
 		null
 
 	unlink_cell: (si) ->
 		if @prev[si] != -1
-			@next[@prev[si]] = -1
+			@cells[@prev[si]].next = -1
 			@prev[si] = -1
-		if @next[si] != -1
-			@prev[@next[si]] = -1
-			@next[si] = -1
+		if @cells[si].next != -1
+			@prev[@cells[si].next] = -1
+			@cells[si].next = -1
 		null
 
 	strip_nums: ->
-		for i in [0 .. @n - 1]
-			if not (@cells[i].flag & FLAG_IMMUTABLE)
-				@cells[i].num = 0
-		@next.fill(-1)
+		for c in @cells
+			if not (c.flag & FLAG_IMMUTABLE)
+				c.num = 0
+			c.next = -1
 		@prev.fill(-1)
 		@numsi.fill(-1)
 		@dsf.constructor(@n)
@@ -359,9 +358,9 @@ class game_state
 	connect_numbers: ->
 		@dsf.constructor(@n)
 		for i in [0 .. @n - 1]
-			if @next[i] != -1
+			if @cells[i].next != -1
 				di = @dsf.canonify(i)
-				dni = @dsf.canonify(@next[i])
+				dni = @dsf.canonify(@cells[i].next)
 				if di == dni
 					@impossible = 1
 				@dsf.merge(di, dni)
@@ -403,12 +402,12 @@ class game_state
 		for i in [0 .. @n - 1]
 			if @cells[i].flag & FLAG_IMMUTABLE
 				@numsi[@cells[i].num] = i
-			else if @prev[i] == -1 and @next[i] == -1
+			else if @prev[i] == -1 and @cells[i].next == -1
 				@cells[i].num = 0
 		@connect_numbers()
 		# Construct an array of the heads of all current regions, together
 		# with their preferred colours.
-		heads = for i in [0 .. @n - 1] when not (@prev[i] != -1 or @next[i] == -1)
+		heads = for i in [0 .. @n - 1] when not (@prev[i] != -1 or @cells[i].next == -1)
 			# Look for a cell that is the start of a chain
 			# (has a next but no prev).
 			new head_meta(this, i)
@@ -437,7 +436,7 @@ class game_state
 						@numsi[nnum] = j
 					@cells[j].num = nnum
 				nnum++
-				j = @next[j]
+				j = @cells[j].next
 		null
 
 	check_completion: (mark_errors) ->
@@ -478,7 +477,7 @@ class game_state
 					@makelink(@numsi[n], @numsi[n+1])
 		# Search and mark numbers less than 0, or 0 with links.
 		for n in [1 .. @n - 1]
-			if @cells[n].num < 0 or (@cells[n].num == 0 and (@next[n] != -1 or @prev[n] != -1))
+			if @cells[n].num < 0 or (@cells[n].num == 0 and (@cells[n].next != -1 or @prev[n] != -1))
 				error = true
 				if mark_errors
 					@cells[n].flag |= FLAG_ERROR
@@ -499,7 +498,7 @@ class game_state
 				if not @in_grid(sx, sy)
 					return null
 				si = sy * @w + sx
-				return null if @prev[si] == -1 and @next[si] == -1
+				return null if @prev[si] == -1 and @cells[si].next == -1
 				if c == 'C'
 					# Unlink the single cell we dragged from the board.
 					ret = @clone()
@@ -539,7 +538,7 @@ class game_state
 		from = (-1 for index in [1 .. @n])
 		# poss is 'can I link to anything' with the same meanings.
 		for i in [0 .. @n - 1]
-			continue if @next[i] != -1
+			continue if @cells[i].next != -1
 			continue if @cells[i].num == @n # no next from last no.
 			d = @cells[i].dir
 			poss = -1
@@ -635,12 +634,12 @@ class head_meta
 				else if @start != ss
 					state.impossible = 1
 			offset++
-			j = state.next[j]
+			j = state.cells[j].next
 		return if @preference
-		if state.cells[i].num == 0 and state.cells[state.next[i]].num > state.n
+		if state.cells[i].num == 0 and state.cells[state.cells[i].next].num > state.n
 			# (probably) empty cell onto the head of a coloured region:
 			# make sure we start at a 0 offset.
-			@start = state.region_start(state.region_colour(state.cells[state.next[i]].num))
+			@start = state.region_start(state.region_colour(state.cells[state.cells[i].next].num))
 			@preference = 1
 			@why = 'adding blank cell to head of numbered region'
 		else if state.cells[i].num <= state.n
@@ -656,9 +655,9 @@ class head_meta
 			n = 1
 			sz = state.dsf.size(i)
 			j = i
-			while state.next[j] != -1
-				j = state.next[j]
-				if state.cells[j].num == 0 and state.next[j] == -1
+			while state.cells[j].next != -1
+				j = state.cells[j].next
+				if state.cells[j].num == 0 and state.cells[j].next == -1
 					@start = state.region_start(c)
 					@preference = 1
 					@why = 'adding blank cell to end of numbered region'
@@ -832,7 +831,7 @@ class game_ui
 				null # single click
 			else if not state.in_grid(x, y)
 				si = @sy * w + @sx
-				if state.prev[si] == -1 and state.next[si] == -1
+				if state.prev[si] == -1 and state.cells[si].next == -1
 					null
 				else
 					[(if @drag_is_from then 'C' else 'X'), @sx, @sy]
@@ -848,7 +847,7 @@ class game_ui
 					['L', x, y, @sx, @sy]
 		else if (button == 'x' or button == 'X') and @cshow
 			si = @cy * w + @cx
-			if state.prev[si] == -1 and state.next[si] == -1
+			if state.prev[si] == -1 and state.cells[si].next == -1
 				null
 			else
 				[(if button == 'x' then 'C' else 'X'), @cx, @cy]
@@ -1142,7 +1141,7 @@ class drawstate
 					f |= F_ERROR
 				if state.cells[i].flag & FLAG_IMMUTABLE
 					f |= F_IMMUTABLE
-				if state.next[i] != -1
+				if state.cells[i].next != -1
 					f |= F_ARROW_POINT
 				if state.prev[i] != -1
 					# Currently the direction here is from our square _back_
