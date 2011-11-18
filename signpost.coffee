@@ -869,18 +869,14 @@ COL_CURSOR = '#000'
 COL_DRAG_ORIGIN = 'blue'
 COL_ERROR = 'red'
 
+ALPHA_DIM = 0.2
+ALPHA_ARROW = 0.3
 
 
-F_CUR = 0x001 # Cursor on this tile.
-F_DRAG_SRC = 0x002 # Tile is source of a drag.
-F_ERROR = 0x004 # Tile marked in error.
-F_IMMUTABLE = 0x008 # Tile (number) is immutable.
-F_ARROW_POINT = 0x010 # Tile points to other tile
-F_ARROW_INPOINT = 0x020 # Other tile points in here.
-F_DIM = 0x040 # Tile is dim
 
 
-set_color = (set) ->
+
+region_color = (set) ->
 	hue = 0
 	step = 60
 	shift = step
@@ -906,7 +902,6 @@ class drawstate
 		@tilesize = 40
 		@border = @tilesize/2
 		@ARROW_HALFSZ = 7 * @tilesize / 32
-		@n = state.n
 		@dragging = @dx = @dy = 0
 
 	# return coordinate of tile center from index
@@ -925,26 +920,21 @@ class drawstate
 			0|((y - @border + @tilesize) / @tilesize) - 1
 		]
 
-	# cx, cy are top-left corner. sz is the 'radius' of the arrow.
+	# cx, cy are top-left corner. r is the 'radius' of the arrow.
 	# ang is in radians, clockwise from 0 == straight up.
-	draw_arrow: (cx, cy, sz, ang, cfill) ->
+	draw_arrow: (cx, cy, r, ang, cfill) ->
 		@dr.save()
 		@dr.translate cx, cy
 		@dr.rotate ang
-		xdx3 = (sz * (1.0/3 + 1) + 0.5) - sz
-		xdy3 = 0.5
-		xdx = sz + 0.5
-		xdy = 0.5
-		ydx = -xdy
-		ydy = xdx
+		p = r * 0.4
 		@dr.beginPath()
-		@dr.moveTo -ydx, -ydy
-		@dr.lineTo xdx, xdy
-		@dr.lineTo xdx3, xdy3
-		@dr.lineTo xdx3 + ydx, xdy3 + ydy
-		@dr.lineTo -xdx3 + ydx, -xdy3 + ydy
-		@dr.lineTo -xdx3, -xdy3
-		@dr.lineTo -xdx, -xdy
+		@dr.moveTo 0, -r
+		@dr.lineTo r, 0
+		@dr.lineTo p, 0
+		@dr.lineTo p, r
+		@dr.lineTo -p, r
+		@dr.lineTo -p, 0
+		@dr.lineTo -r, 0
 		@dr.fillStyle = cfill
 		@dr.fill()
 		@dr.restore()
@@ -967,113 +957,14 @@ class drawstate
 		@dr.restore()
 		null
 
-	tile_redraw: (tx, ty, dir, dirp, num, f) ->
-		cb = @tilesize / 16
-		empty = false
-		if num == 0 and not (f & F_ARROW_POINT) and not (f & F_ARROW_INPOINT)
-			empty = true
-			# We don't display text in empty cells: typically these are
-			# signified by num=0. However, in some cases a cell could
-			# have had the number 0 assigned to it if the user made an
-			# error (e.g. tried to connect a chain of length 5 to the
-			# immutable number 4) so we _do_ display the 0 if the cell
-			# has a link in or a link out.
-		# Calculate colours.
-		setcol =
-			if empty
-				COL_BACKGROUND
-			else
-				set = 0|(num / (@n + 1))
-				if num <= 0 or set == 0
-					'#fff'
-				else
-					set_color(set)
-
-		arrowcol =
-			if f & F_DRAG_SRC
-				COL_DRAG_ORIGIN
-			else if f & F_DIM
-				dim(COL_ARROW, setcol)
-			else if f & F_ARROW_POINT
-				mid(COL_ARROW, setcol)
-			else 
-				COL_ARROW
-		textcol =
-			if (f & F_ERROR) and not (f & F_IMMUTABLE)
-				COL_ERROR
-			else
-				_textcol = if f & F_IMMUTABLE then COL_NUMBER_SET else COL_NUMBER
-				if f & F_DIM
-					dim(_textcol, setcol)
-				else if ((f & F_ARROW_POINT) or num == @n) and ((f & F_ARROW_INPOINT) or num == 1)
-					mid(_textcol, setcol)
-				else
-					_textcol
-		sarrowcol = if f & F_DIM then dim(COL_ARROW, setcol) else COL_ARROW
-		# Clear tile background
-		@dr.fillStyle = if f & F_DIM then dimbg(setcol) else setcol
-		@dr.fillRect(tx, ty, @tilesize, @tilesize)
-		# Draw large (outwards-pointing) arrow.
-		asz = @ARROW_HALFSZ # 'radius' of arrow/star.
-		acx = tx + @tilesize/2 + asz # centre x
-		acy = ty + @tilesize/2 + asz # centre y
-		if num == @n and (f & F_IMMUTABLE)
-			@draw_star(acx, acy, asz, 5, arrowcol)
-		else
-			ang = 2.0 * Math.PI * dir / 8.0
-			@draw_arrow(acx, acy, asz, ang, arrowcol)
-		if f & F_CUR
-			@dr.beginPath()
-			s = asz + 1
-			b = s / 2
-			for i in [0 .. 3]
-				@dr.save()
-				@dr.translate acx, acy
-				@dr.rotate i * Math.PI / 2
-				@dr.moveTo s, s - b
-				@dr.lineTo s, s
-				@dr.lineTo s - b, s
-				@dr.restore()
-			@dr.strokeStyle = COL_CURSOR
-			@dr.stroke()
-		# Draw dot iff this tile requires a predecessor and doesn't have one.
-		acx = tx + @tilesize/2 - asz
-		acy = ty + @tilesize/2 + asz
-		if not (f & F_ARROW_INPOINT) and num != 1
-			@dr.beginPath()
-			@dr.arc acx, acy, asz / 4, 0, 2 * Math.PI, false
-			@dr.fillStyle = sarrowcol
-			@dr.fill()
-		# Draw text (number or set).
-		if not empty
-			set = if num <= 0 then 0 else 0|(num / (@n + 1))
-			buf = ''
-			if set == 0 or num <= 0
-				buf = "#{num}"
-			else
-				while set > 0
-					set--
-					buf += ALPHABET[0|(set % ALPHABET.length)]
-					set = 0|(set / 26)
-				n = 0|(num % (@n + 1))
-				if n != 0
-					buf += "+#{n}"
-			@dr.save()
-			@dr.font = "#{@tilesize/3}px sans-serif"
-			@dr.fillStyle = textcol
-			@dr.fillText(buf, tx + cb, ty + @tilesize * 0.4)
-			@dr.restore()
-		@dr.strokeStyle = COL_GRID
-		@dr.strokeRect(tx, ty, @tilesize, @tilesize)
-		null
-
 	draw_drag_indicator: (state, ui, validdrag) ->
-		w = state.w
-		acol = COL_ARROW
-		[fx, fy] = @cell_at(ui.dx, ui.dy)
 		if validdrag
 			# If we could move here, lock the arrow to the appropriate direction.
-			dir = if ui.drag_is_from then state.cells[ui.sy*w+ui.sx].dir else state.cells[fy*w+fx].dir
+			if ui.drag_is_from
+				dir = state.cells[ui.sy * state.w + ui.sx].dir 
+			else
+				[fx, fy] = @cell_at(ui.dx, ui.dy)
+				dir = state.cells[fy * state.w + fx].dir
 			ang = (2.0 * Math.PI * dir) / 8.0 # similar to calculation in draw_arrow_dir.
 		else
 			# Draw an arrow pointing away from/towards the origin cell.
@@ -1101,11 +992,10 @@ class drawstate
 					Math.atan(tana) + offset
 			if not ui.drag_is_from
 				ang += Math.PI # poto origin, not away from.
-		@draw_arrow(ui.dx, ui.dy, @ARROW_HALFSZ, ang, acol)
+		@draw_arrow(ui.dx, ui.dy, @ARROW_HALFSZ, ang, COL_ARROW)
 		null
 
 	game_redraw: (state, ui) ->
-		w = state.w
 		postdrop = null
 		# If an in-progress drag would make a valid move if finished, we
 		# reflect that move in the board display. We let interpret_move do
@@ -1124,32 +1014,104 @@ class drawstate
 		@dr.strokeRect(@border - 1, @border - 1, aw + 2, ah + 2)
 		for x in [0 .. state.w - 1]
 			for y in [0 .. state.h - 1]
-				i = y*w + x
-				f = 0
-				dirp = -1
-				if ui.cshow and x == ui.cx and y == ui.cy
-					f |= F_CUR
+				@dr.save()
+				@dr.translate @cell_coord(x, y)...
+				cell = state.cells[x + y * state.w]
+				arrowcol = COL_ARROW
 				if ui.dragging
 					if x == ui.sx and y == ui.sy
-						f |= F_DRAG_SRC
+						arrowcol = COL_DRAG_ORIGIN
 					else if ui.drag_is_from
 						if not state.ispointing(ui.sx, ui.sy, x, y)
-							f |= F_DIM
+							@dr.globalAlpha = ALPHA_DIM
 					else if not state.ispointing(x, y, ui.sx, ui.sy)
-						f |= F_DIM
-				if state.impossible or state.cells[i].num < 0 or state.cells[i].error
-					f |= F_ERROR
-				if state.cells[i].immutable
-					f |= F_IMMUTABLE
-				if state.cells[i].next != -1
-					f |= F_ARROW_POINT
-				if state.cells[i].prev != -1
-					# Currently the direction here is from our square _back_
-					# to its previous. We could change this to give the opposite
-					# sense to the direction.
-					f |= F_ARROW_INPOINT
-					dirp = whichdir(x, y, 0|(state.cells[i].prev % w), 0|(state.cells[i].prev / w))
-				@tile_redraw(@border + x * @tilesize, @border + y * @tilesize, state.cells[i].dir, dirp, state.cells[i].num, f)
+						@dr.globalAlpha = ALPHA_DIM
+				arrow_out = cell.next != -1
+				arrow_in = cell.prev != -1
+				# We don't display text in empty cells: typically these are
+				# signified by num=0. However, in some cases a cell could
+				# have had the number 0 assigned to it if the user made an
+				# error (e.g. tried to connect a chain of length 5 to the
+				# immutable number 4) so we _do_ display the 0 if the cell
+				# has a link in or a link out.
+				empty = cell.num == 0 and not arrow_out and not arrow_in
+				# Clear tile background
+				@dr.fillStyle =
+					if empty
+						COL_BACKGROUND
+					else
+						region = state.region_colour(cell.num)
+						if cell.num <= 0 or region == 0
+							'#fff'
+						else
+							region_color(region)
+				@dr.fillRect(0, 0, @tilesize, @tilesize)
+				## Draw arrow or star
+				@dr.save()
+				if arrow_out
+					@dr.globalAlpha = Math.min(@dr.globalAlpha, ALPHA_ARROW)
+				# Draw large (outwards-pointing) arrow.
+				asz = @ARROW_HALFSZ # 'radius' of arrow/star.
+				acx = @tilesize/2 + asz # centre x
+				acy = @tilesize/2 + asz # centre y
+				if cell.num == state.n and cell.immutable
+					@draw_star(acx, acy, asz, 5, arrowcol)
+				else
+					ang = 2.0 * Math.PI * cell.dir / 8.0
+					@draw_arrow(acx, acy, asz, ang, arrowcol)
+				if ui.cshow and x == ui.cx and y == ui.cy
+					@dr.beginPath()
+					s = asz + 1
+					b = s / 2
+					for i in [0 .. 3]
+						@dr.save()
+						@dr.translate acx, acy
+						@dr.rotate i * Math.PI / 2
+						@dr.moveTo s, s - b
+						@dr.lineTo s, s
+						@dr.lineTo s - b, s
+						@dr.restore()
+					@dr.strokeStyle = COL_CURSOR
+					@dr.stroke()
+				@dr.restore()
+				# Draw dot iff this tile requires a predecessor and doesn't have one.
+				if not arrow_in and cell.num != 1
+					@dr.beginPath()
+					@dr.arc @tilesize/2 - asz, @tilesize/2 + asz, asz / 4, 0, 2 * Math.PI, false
+					@dr.fillStyle = COL_ARROW
+					@dr.fill()
+				# Draw text (number or set).
+				@dr.save()
+				if (arrow_in and arrow_out) or (cell.num == state.n) or (cell.num == 1)
+					@dr.globalAlpha = Math.min(@dr.globalAlpha, ALPHA_ARROW)
+				if not empty
+					set = if cell.num <= 0 then 0 else state.region_colour(cell.num)
+					@dr.fillStyle =
+						if cell.immutable
+							COL_NUMBER_SET
+						else if state.impossible or cell.num < 0 or cell.error
+							COL_ERROR
+						else
+							COL_NUMBER
+					if set == 0 or cell.num <= 0
+						buf = "#{cell.num}"
+						@dr.font = "bold #{@tilesize * 0.4}px sans-serif"
+						@dr.fillText(buf, @tilesize * 0.1, @tilesize * 0.4)
+					else
+						buf = ''
+						while set > 0
+							set--
+							buf += ALPHABET[0|(set % ALPHABET.length)]
+							set = 0|(set / 26)
+						n = 0|(cell.num % (state.n + 1))
+						if n != 0
+							buf += "+#{n}"
+						@dr.font = "#{@tilesize * 0.35}px sans-serif"
+						@dr.fillText(buf, @tilesize * 0.1, @tilesize * 0.4)
+				@dr.restore()
+				@dr.strokeStyle = COL_GRID
+				@dr.strokeRect(0, 0, @tilesize, @tilesize)
+				@dr.restore()
 		if ui.dragging
 			@dragging = true
 			@dx = ui.dx - @tilesize/2
