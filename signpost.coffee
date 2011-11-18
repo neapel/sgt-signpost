@@ -21,8 +21,8 @@ class GameParams
 						taili = Math.random_int(state.n)
 						break unless headi == taili
 				break if state.new_game_fill(headi, taili)
-			state.cells[headi].flag |= FLAG_IMMUTABLE
-			state.cells[taili].flag |= FLAG_IMMUTABLE
+			state.cells[headi].immutable = true
+			state.cells[taili].immutable = true
 			# This will have filled in directions and _all_ numbers.
 			# Store the game definition for this, as the solved-state.
 			if state.new_game_strip()
@@ -60,14 +60,12 @@ whichdir = (fromx, fromy, tox, toy) ->
 			return i
 	return -1
 
-FLAG_IMMUTABLE = 1
-FLAG_ERROR = 2
-
 class Cell
 	constructor: ->
 		@dir = 0
 		@num = 0
-		@flag = 0
+		@immutable = false
+		@error = false
 		@next = -1
 		@prev = -1
 
@@ -75,7 +73,8 @@ class Cell
 		c = new Cell()
 		c.dir = @dir
 		c.num = @num
-		c.flag = @flag
+		c.immutable = @immutable
+		c.error = @error
 		c.next = @next
 		c.prev = @prev
 		c
@@ -170,8 +169,8 @@ class game_state
 		nfrom = @cells[from].num
 		nto = @cells[to].num
 		# can't move _from_ the preset final number, or _to_ the preset 1.
-		return false if nfrom == @n and (@cells[from].flag & FLAG_IMMUTABLE)
-		return false if nto == 1 and (@cells[to].flag & FLAG_IMMUTABLE)
+		return false if nfrom == @n and @cells[from].immutable
+		return false if nto == 1 and @cells[to].immutable
 		# can't create a new connection between cells in the same region
 		# as that would create a loop.
 		return false if @dsf.canonify(from) == @dsf.canonify(to)
@@ -209,7 +208,7 @@ class game_state
 
 	strip_nums: ->
 		for c in @cells
-			if not (c.flag & FLAG_IMMUTABLE)
+			if not c.immutable
 				c.num = 0
 			c.next = c.prev = -1
 		@numsi.fill(-1)
@@ -284,7 +283,7 @@ class game_state
 	#
 	# So, new generator steps:
 	# generate the grid, at random (same as now). Numbers 1 and N get
-	# immutable flag immediately.
+	# immutable immediately.
 	# squirrel that away for the solved state.
 	#
 	# (solve:) Try and solve it.
@@ -309,7 +308,7 @@ class game_state
 	#               free everything we need to, and go back to regenerate the grid.
 
 	# Expects a fully-numbered game_state on input, and makes sure
-	# FLAG_IMMUTABLE is only set on those numbers we need to solve
+	# immutable is only set on those numbers we need to solve
 	# (as for a real new-game); returns 1 if it managed
 	# this (such that it could solve it), or 0 if not.
 	new_game_strip: ->
@@ -330,8 +329,8 @@ class game_state
 				if copy.cells[j].num > 0 and copy.cells[j].num <= @n
 					continue # already solved to a real number here.
 				copy.cells[j].num = @cells[j].num
-				copy.cells[j].flag |= FLAG_IMMUTABLE
-				@cells[j].flag |= FLAG_IMMUTABLE
+				copy.cells[j].immutable = true
+				@cells[j].immutable = true
 				copy.strip_nums()
 				cps = copy.solve_state()
 				if cps
@@ -344,14 +343,14 @@ class game_state
 		# remove the number. Make sure we don't remove the anchor numbers
 		# 1 and N.
 		for j in scratch
-			if (@cells[j].flag & FLAG_IMMUTABLE) and @cells[j].num != 1 and @cells[j].num != @n
-				@cells[j].flag &= ~FLAG_IMMUTABLE
+			if @cells[j].immutable and @cells[j].num != 1 and @cells[j].num != @n
+				@cells[j].immutable = false
 				copy = @clone()
 				copy.strip_nums()
 				cps = copy.solve_state()
 				if not cps
 					copy.cells[j].num = @cells[j].num
-					@cells[j].flag |= FLAG_IMMUTABLE
+					@cells[j].immutable = true
 				else
 					copy = cps
 		true
@@ -401,7 +400,7 @@ class game_state
 	update_numbers: ->
 		@numsi.fill(-1)
 		for cell, i in @cells
-			if cell.flag & FLAG_IMMUTABLE
+			if cell.immutable
 				@numsi[cell.num] = i
 			else if cell.prev == -1 and cell.next == -1
 				cell.num = 0
@@ -432,7 +431,7 @@ class game_state
 			nnum = head.start
 			j = head.i
 			while j != -1
-				if not (@cells[j].flag & FLAG_IMMUTABLE)
+				if not @cells[j].immutable
 					if nnum > 0 and nnum <= @n
 						@numsi[nnum] = j
 					@cells[j].num = nnum
@@ -449,15 +448,15 @@ class game_state
 		# it would add lots of tricky drawing code for very little gain).
 		if mark_errors
 			for c in @cells
-				c.flag &= ~FLAG_ERROR
+				c.error = false
 		# Search for repeated numbers.
 		for cellj, j in @cells
 			if cellj.num > 0 and cellj.num <= @n
 				for cellk in @cells[j + 1 ..]
 					if cellk.num == cellj.num
 						if mark_errors
-							cellj.flag |= FLAG_ERROR
-							cellk.flag |= FLAG_ERROR
+							cellj.error = true
+							cellk.error = true
 						error = true
 		# Search and mark numbers n not pointing to n+1; if any numbers
 		# are missing we know we've not completed.
@@ -467,8 +466,8 @@ class game_state
 				complete = false
 			else if not @ispointingi(@numsi[n], @numsi[n + 1])
 				if mark_errors
-					@cells[@numsi[n]].flag |= FLAG_ERROR
-					@cells[@numsi[n + 1]].flag |= FLAG_ERROR
+					@cells[@numsi[n]].error = true
+					@cells[@numsi[n + 1]].error = true
 				error = true
 			else
 				# make sure the link is explicitly made here; for instance, this
@@ -481,7 +480,7 @@ class game_state
 			if cell.num < 0 or (cell.num == 0 and (cell.next != -1 or cell.prev != -1))
 				error = true
 				if mark_errors
-					cell.flag |= FLAG_ERROR
+					cell.error = true
 		return false if error
 		return complete
 
@@ -626,7 +625,7 @@ class head_meta
 		j = @i
 		offset = 0
 		while j != -1
-			if state.cells[j].flag & FLAG_IMMUTABLE
+			if state.cells[j].immutable
 				ss = state.cells[j].num - offset
 				if not @preference
 					@start = ss
@@ -808,11 +807,11 @@ class game_ui
 				return null
 			if button == LEFT_BUTTON
 				# disallow dragging from the final number.
-				if (state.cells[index].num == state.n) and (state.cells[index].flag & FLAG_IMMUTABLE)
+				if (state.cells[index].num == state.n) and state.cells[index].immutable
 					return null
 			else if button == RIGHT_BUTTON
 				# disallow dragging to the first number.
-				if (state.cells[index].num == 1) and (state.cells[index].flag & FLAG_IMMUTABLE)
+				if (state.cells[index].num == 1) and state.cells[index].immutable
 					return null
 			@dragging = true
 			@drag_is_from = (button == LEFT_BUTTON)
@@ -1138,9 +1137,9 @@ class drawstate
 							f |= F_DIM
 					else if not state.ispointing(x, y, ui.sx, ui.sy)
 						f |= F_DIM
-				if state.impossible or state.cells[i].num < 0 or state.cells[i].flag & FLAG_ERROR
+				if state.impossible or state.cells[i].num < 0 or state.cells[i].error
 					f |= F_ERROR
-				if state.cells[i].flag & FLAG_IMMUTABLE
+				if state.cells[i].immutable
 					f |= F_IMMUTABLE
 				if state.cells[i].next != -1
 					f |= F_ARROW_POINT
