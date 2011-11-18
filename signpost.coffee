@@ -142,6 +142,7 @@ class game_state
 	# at (x,y) will fit in that gap, or 0 otherwise.
 	move_couldfit: (num, d, x, y) ->
 		i = y * @w + x
+		cell = @cells[i]
 		# The 'gap' is the number of missing numbers in the grid between
 		# our number and the next one in the sequence (up or down), or
 		# the end of the sequence (if we happen not to have 1/n present)
@@ -153,8 +154,8 @@ class game_state
 		if gap == 0
 			# no gap, so the only allowable move is that that directly
 			# links the two numbers.
-			@cells[i].num != num + d
-		else if @cells[i].prev == -1 and @cells[i].next == -1
+			cell.num != num + d
+		else if cell.prev == -1 and cell.next == -1
 			true # single unconnected square, always OK
 		else
 			@dsf.size(i) <= gap
@@ -186,21 +187,24 @@ class game_state
 			true
 
 	makelink: (from, to) ->
-		if @cells[from].next != -1
-			@cells[@cells[from].next].prev = -1
-		@cells[from].next = to
-		if @cells[to].prev != -1
-			@cells[@cells[to].prev].next = -1
-		@cells[to].prev = from
+		c_from = @cells[from]
+		c_to = @cells[to]
+		if c_from.next != -1
+			@cells[c_from.next].prev = -1
+		c_from.next = to
+		if c_to.prev != -1
+			@cells[c_to.prev].next = -1
+		c_to.prev = from
 		null
 
 	unlink_cell: (si) ->
-		if @cells[si].prev != -1
-			@cells[@cells[si].prev].next = -1
-			@cells[si].prev = -1
-		if @cells[si].next != -1
-			@cells[@cells[si].next].prev = -1
-			@cells[si].next = -1
+		cell = @cells[si]
+		if cell.prev != -1
+			@cells[cell.prev].next = -1
+			cell.prev = -1
+		if cell.next != -1
+			@cells[cell.next].prev = -1
+			cell.next = -1
 		null
 
 	strip_nums: ->
@@ -354,10 +358,10 @@ class game_state
 
 	connect_numbers: ->
 		@dsf.constructor(@n)
-		for i in [0 .. @n - 1]
-			if @cells[i].next != -1
+		for cell, i in @cells
+			if cell.next != -1
 				di = @dsf.canonify(i)
-				dni = @dsf.canonify(@cells[i].next)
+				dni = @dsf.canonify(cell.next)
 				if di == dni
 					@impossible = 1
 				@dsf.merge(di, dni)
@@ -396,15 +400,15 @@ class game_state
 
 	update_numbers: ->
 		@numsi.fill(-1)
-		for i in [0 .. @n - 1]
-			if @cells[i].flag & FLAG_IMMUTABLE
-				@numsi[@cells[i].num] = i
-			else if @cells[i].prev == -1 and @cells[i].next == -1
-				@cells[i].num = 0
+		for cell, i in @cells
+			if cell.flag & FLAG_IMMUTABLE
+				@numsi[cell.num] = i
+			else if cell.prev == -1 and cell.next == -1
+				cell.num = 0
 		@connect_numbers()
 		# Construct an array of the heads of all current regions, together
 		# with their preferred colours.
-		heads = for i in [0 .. @n - 1] when not (@cells[i].prev != -1 or @cells[i].next == -1)
+		heads = for cell, i in @cells when not (cell.prev != -1 or cell.next == -1)
 			# Look for a cell that is the start of a chain
 			# (has a next but no prev).
 			new head_meta(this, i)
@@ -444,16 +448,16 @@ class game_state
 		# by the code elsewhere, so we don't bother marking those (because
 		# it would add lots of tricky drawing code for very little gain).
 		if mark_errors
-			for j in [0 .. @n - 1]
-				@cells[j].flag &= ~FLAG_ERROR
+			for c in @cells
+				c.flag &= ~FLAG_ERROR
 		# Search for repeated numbers.
-		for j in [0 .. @n - 1]
-			if @cells[j].num > 0 and @cells[j].num <= @n
-				for k in [j + 1 .. @n - 1] by 1
-					if @cells[k].num == @cells[j].num
+		for cellj, j in @cells
+			if cellj.num > 0 and cellj.num <= @n
+				for cellk in @cells[j + 1 ..]
+					if cellk.num == cellj.num
 						if mark_errors
-							@cells[j].flag |= FLAG_ERROR
-							@cells[k].flag |= FLAG_ERROR
+							cellj.flag |= FLAG_ERROR
+							cellk.flag |= FLAG_ERROR
 						error = true
 		# Search and mark numbers n not pointing to n+1; if any numbers
 		# are missing we know we've not completed.
@@ -473,11 +477,11 @@ class game_state
 				if mark_errors
 					@makelink(@numsi[n], @numsi[n+1])
 		# Search and mark numbers less than 0, or 0 with links.
-		for n in [1 .. @n - 1]
-			if @cells[n].num < 0 or (@cells[n].num == 0 and (@cells[n].next != -1 or @cells[n].prev != -1))
+		for cell in @cells
+			if cell.num < 0 or (cell.num == 0 and (cell.next != -1 or cell.prev != -1))
 				error = true
 				if mark_errors
-					@cells[n].flag |= FLAG_ERROR
+					cell.flag |= FLAG_ERROR
 		return false if error
 		return complete
 
@@ -758,7 +762,7 @@ class game_ui
 	# returns a move object to be passed to state.execute_move()
 	interpret_move: (state, ds, mx, my, button) ->
 		[x, y] = ds.cell_at(mx, my)
-		w = state.w
+		index = y * state.w + x
 		if IS_CURSOR_MOVE(button)
 			switch button
 				when CURSOR_UP
@@ -804,11 +808,11 @@ class game_ui
 				return null
 			if button == LEFT_BUTTON
 				# disallow dragging from the final number.
-				if (state.cells[y*w+x].num == state.n) and (state.cells[y*w+x].flag & FLAG_IMMUTABLE)
+				if (state.cells[index].num == state.n) and (state.cells[index].flag & FLAG_IMMUTABLE)
 					return null
 			else if button == RIGHT_BUTTON
 				# disallow dragging to the first number.
-				if (state.cells[y*w+x].num == 1) and (state.cells[y*w+x].flag & FLAG_IMMUTABLE)
+				if (state.cells[index].num == 1) and (state.cells[index].flag & FLAG_IMMUTABLE)
 					return null
 			@dragging = true
 			@drag_is_from = (button == LEFT_BUTTON)
@@ -827,7 +831,7 @@ class game_ui
 			if @sx == x and @sy == y
 				null # single click
 			else if not state.in_grid(x, y)
-				si = @sy * w + @sx
+				si = @sy * state.w + @sx
 				if state.cells[si].prev == -1 and state.cells[si].next == -1
 					null
 				else
@@ -843,7 +847,7 @@ class game_ui
 				else
 					['L', x, y, @sx, @sy]
 		else if (button == 'x' or button == 'X') and @cshow
-			si = @cy * w + @cx
+			si = @cy * state.w + @cx
 			if state.cells[si].prev == -1 and state.cells[si].next == -1
 				null
 			else
