@@ -36,3 +36,25 @@ Array::fill = (value) ->
 		this[index] = value
 	null
 
+
+point_angle = (ox, oy, dx, dy) ->
+	xdiff = Math.abs(ox - dx)
+	ydiff = Math.abs(oy - dy)
+	if xdiff == 0
+		if oy > dy then 0 else Math.PI
+	else if ydiff == 0
+		if ox > dx then 3 * Math.PI / 2 else Math.PI / 2
+	else
+		if dx > ox and dy < oy
+			tana = xdiff / ydiff
+			offset = 0
+		else if dx > ox and dy > oy
+			tana = ydiff / xdiff
+			offset = Math.PI / 2
+		else if dx < ox and dy > oy
+			tana = xdiff / ydiff
+			offset = Math.PI
+		else
+			tana = ydiff / xdiff
+			offset = 3 * Math.PI / 2
+		Math.atan(tana) + offset

@@ -46,6 +46,9 @@ DIRECTION = [
 
 DIR_OPPOSITE = (d) -> 0|((d + 4) % 8)
 
+dir_angle = (dir) ->
+	2.0 * Math.PI * dir / 8.0
+
 whichdir = (fromx, fromy, tox, toy) ->
 	dx = tox - fromx
 	dy = toy - fromy
@@ -514,9 +517,7 @@ class game_state
 							ret.unlink_cell(i)
 					return ret
 			else if move[0] == 'H'
-				ret = @clone()
-				ret = ret.solve_state()
-				return ret
+				return @solve_state()
 		if new_state
 			new_state.update_numbers()
 			if new_state.check_completion(true)
@@ -731,37 +732,17 @@ IS_CURSOR_SELECT = (m) ->
 	m == CURSOR_SELECT || m == CURSOR_SELECT2
 
 
-class game_ui
+class GameUI
 	constructor: () ->
 		@cx = @cy = 0
 		@cshow = false
-		@dragging = 0
+		@dragging = false
 		@sx = @sy = 0 # grid coords of start cell
 		@dx = @dy = 0 # grid coords of drag posn
 		@drag_is_from = false
 
-	clone: ->
-		g = new game_ui()
-		g.cx = @cx
-		g.cy = @cy
-		g.cshow = @cshow
-		g.dragging = @dragging
-		g.sx = @sx
-		g.sy = @sy
-		g.dx = @dx
-		g.dy = @dy
-		g.drag_is_from = @drag_is_from
-		g
-
-	game_changed_state: (oldstate, newstate) ->
-		if not oldstate.completed and newstate.completed
-			@cshow = @dragging = 0
-		null
-
 	# returns a move object to be passed to state.execute_move()
-	interpret_move: (state, ds, mx, my, button) ->
-		[x, y] = ds.cell_at(mx, my)
-		index = y * state.w + x
+	interpret_cursor: (state, ds, button) ->
 		if IS_CURSOR_MOVE(button)
 			switch button
 				when CURSOR_UP
@@ -800,51 +781,70 @@ class game_ui
 				[@dx, @dy] = ds.cell_center(@cx, @cy)
 				@drag_is_from = (button == CURSOR_SELECT)
 				null
-		else if IS_MOUSE_DOWN(button)
-			if @cshow
-				@cshow = @dragging = false
-			if not state.in_grid(x, y)
+	
+	interpret_mouse_down: (state, ds, mx, my, button) ->
+		[x, y] = ds.cell_at(mx, my)
+		index = y * state.w + x
+		if @cshow
+			@cshow = @dragging = false
+		if not state.in_grid(x, y)
+			return null
+		if button == LEFT_BUTTON
+			# disallow dragging from the final number.
+			if (state.cells[index].num == state.n) and state.cells[index].immutable
 				return null
-			if button == LEFT_BUTTON
-				# disallow dragging from the final number.
-				if (state.cells[index].num == state.n) and state.cells[index].immutable
-					return null
-			else if button == RIGHT_BUTTON
-				# disallow dragging to the first number.
-				if (state.cells[index].num == 1) and state.cells[index].immutable
-					return null
-			@dragging = true
-			@drag_is_from = (button == LEFT_BUTTON)
-			@sx = x
-			@sy = y
+		else if button == RIGHT_BUTTON
+			# disallow dragging to the first number.
+			if (state.cells[index].num == 1) and state.cells[index].immutable
+				return null
+		@dragging = true
+		@drag_is_from = (button == LEFT_BUTTON)
+		@sx = x
+		@sy = y
+		@dx = mx
+		@dy = my
+		@cshow = false
+		null
+
+	interpret_mouse_drag: (mx, my) ->
+		if @dragging
 			@dx = mx
 			@dy = my
-			@cshow = false
-			null
-		else if IS_MOUSE_DRAG(button) and @dragging
-			@dx = mx
-			@dy = my
-			null
+		null
+
+	interpret_mouse_drag_release: (state, ds, mx, my) ->
+		[x, y] = ds.cell_at(mx, my)
+		if @sx == x and @sy == y
+			null # single click
+		else if not state.in_grid(x, y)
+			si = @sy * state.w + @sx
+			if state.cells[si].prev == -1 and state.cells[si].next == -1
+				null
+			else
+				[(if @drag_is_from then 'C' else 'X'), @sx, @sy]
+		else if @drag_is_from
+			if not state.isvalidmove(false, @sx, @sy, x, y)
+				null
+			else
+				['L', @sx, @sy, x, y]
+		else
+			if not state.isvalidmove(false, x, y, @sx, @sy)
+				null
+			else
+				['L', x, y, @sx, @sy]
+
+	interpret_move: (state, ds, mx, my, button) ->
+		if IS_CURSOR_MOVE(button)
+			@interpret_cursor(state, ds, button)
+		else if IS_CURSOR_SELECT(button)
+			@interpret_cursor(state, ds, button)
+		else if IS_MOUSE_DOWN(button)
+			@interpret_mouse_down(state, ds, mx, my, button)
+		else if IS_MOUSE_DRAG(button)
+			@interpret_mouse_drag(mx, my)
 		else if IS_MOUSE_RELEASE(button) and @dragging
 			@dragging = false
-			if @sx == x and @sy == y
-				null # single click
-			else if not state.in_grid(x, y)
-				si = @sy * state.w + @sx
-				if state.cells[si].prev == -1 and state.cells[si].next == -1
-					null
-				else
-					[(if @drag_is_from then 'C' else 'X'), @sx, @sy]
-			else if @drag_is_from
-				if not state.isvalidmove(false, @sx, @sy, x, y)
-					null
-				else
-					['L', @sx, @sy, x, y]
-			else
-				if not state.isvalidmove(false, x, y, @sx, @sy)
-					null
-				else
-					['L', x, y, @sx, @sy]
+			@interpret_mouse_drag_release(state, ds, mx, my)
 		else if (button == 'x' or button == 'X') and @cshow
 			si = @cy * state.w + @cx
 			if state.cells[si].prev == -1 and state.cells[si].next == -1
@@ -888,21 +888,12 @@ region_color = (set) ->
 			hue += shift
 	Color({hue: hue, saturation: 0.3, value: 1}).toCSS()
 
-
-dim = (a, b) ->
-	Color(a).blend(Color(b), 0.5).toCSS()
-mid = (a, b) ->
-	dim(a, b)
-dimbg = (a) ->
-	dim(a, COL_BACKGROUND)
-
-
-class drawstate
-	constructor: (@dr) ->
-		@tilesize = 40
-		@border = @tilesize/2
-		@ARROW_HALFSZ = 7 * @tilesize / 32
-		@dragging = @dx = @dy = 0
+class CanvasPainter
+	constructor: (@dr, params) ->
+		tsx = @dr.canvas.width / params.w
+		tsy = @dr.canvas.height / params.h
+		@tilesize = Math.floor(Math.min(tsx, tsy))
+		@arrow_size = 7 * @tilesize / 32
 
 	# return coordinate of tile center from index
 	cell_center: (cx, cy) ->
@@ -911,13 +902,13 @@ class drawstate
 		
 	# return coordinate of upper left corner
 	cell_coord: (x, y) ->
-		[x * @tilesize + @border, y * @tilesize + @border]
+		[x * @tilesize, y * @tilesize]
 
 	# return cell index for coordinate
 	cell_at: (x, y) ->
 		[
-			0|((x - @border + @tilesize) / @tilesize) - 1
-			0|((y - @border + @tilesize) / @tilesize) - 1
+			0|((x + @tilesize) / @tilesize) - 1
+			0|((y + @tilesize) / @tilesize) - 1
 		]
 
 	# cx, cy are top-left corner. r is the 'radius' of the arrow.
@@ -957,61 +948,22 @@ class drawstate
 		@dr.restore()
 		null
 
-	draw_drag_indicator: (state, ui, validdrag) ->
-		if validdrag
-			# If we could move here, lock the arrow to the appropriate direction.
-			if ui.drag_is_from
-				dir = state.cells[ui.sy * state.w + ui.sx].dir 
-			else
-				[fx, fy] = @cell_at(ui.dx, ui.dy)
-				dir = state.cells[fy * state.w + fx].dir
-			ang = (2.0 * Math.PI * dir) / 8.0 # similar to calculation in draw_arrow_dir.
-		else
-			# Draw an arrow pointing away from/towards the origin cell.
-			[ox, oy] = @cell_center(ui.sx, ui.sy)
-			xdiff = Math.abs(ox - ui.dx)
-			ydiff = Math.abs(oy - ui.dy)
-			ang =
-				if xdiff == 0
-					if oy > ui.dy then 0 else Math.PI
-				else if ydiff == 0
-					if ox > ui.dx then 3 * Math.PI / 2 else Math.PI / 2
-				else
-					if ui.dx > ox and ui.dy < oy
-						tana = xdiff / ydiff
-						offset = 0
-					else if ui.dx > ox and ui.dy > oy
-						tana = ydiff / xdiff
-						offset = Math.PI / 2
-					else if ui.dx < ox and ui.dy > oy
-						tana = xdiff / ydiff
-						offset = Math.PI
-					else
-						tana = ydiff / xdiff
-						offset = 3 * Math.PI / 2
-					Math.atan(tana) + offset
-			if not ui.drag_is_from
-				ang += Math.PI # poto origin, not away from.
-		@draw_arrow(ui.dx, ui.dy, @ARROW_HALFSZ, ang, COL_ARROW)
-		null
+
 
 	game_redraw: (state, ui) ->
 		postdrop = null
 		# If an in-progress drag would make a valid move if finished, we
 		# reflect that move in the board display. We let interpret_move do
-		# most of the heavy lifting for us: we have to copy the game_ui so
+		# most of the heavy lifting for us: we have to copy the GameUI so
 		# as not to stomp on the real UI's drag state.
 		if ui.dragging
-			uicopy = ui.clone()
-			movestr = uicopy.interpret_move(state, this, ui.dx, ui.dy, LEFT_RELEASE)
-			if movestr
-				state = postdrop = state.execute_move(movestr)
+			move = ui.interpret_mouse_drag_release(state, this, ui.dx, ui.dy)
+			if move
+				state = postdrop = state.execute_move(move)
 		aw = @tilesize * state.w
 		ah = @tilesize * state.h
 		@dr.fillStyle = COL_BACKGROUND
-		@dr.fillRect(0, 0, aw + 2 * @border, ah + 2 * @border)
-		@dr.strokeStyle = COL_GRID
-		@dr.strokeRect(@border - 1, @border - 1, aw + 2, ah + 2)
+		@dr.fillRect(0, 0, aw, ah)
 		for x in [0 .. state.w - 1]
 			for y in [0 .. state.h - 1]
 				@dr.save()
@@ -1051,17 +1003,15 @@ class drawstate
 				if arrow_out
 					@dr.globalAlpha = Math.min(@dr.globalAlpha, ALPHA_ARROW)
 				# Draw large (outwards-pointing) arrow.
-				asz = @ARROW_HALFSZ # 'radius' of arrow/star.
-				acx = @tilesize/2 + asz # centre x
-				acy = @tilesize/2 + asz # centre y
+				acx = @tilesize/2 + @arrow_size # centre x
+				acy = @tilesize/2 + @arrow_size # centre y
 				if cell.num == state.n and cell.immutable
-					@draw_star(acx, acy, asz, 5, arrowcol)
+					@draw_star(acx, acy, @arrow_size, 5, arrowcol)
 				else
-					ang = 2.0 * Math.PI * cell.dir / 8.0
-					@draw_arrow(acx, acy, asz, ang, arrowcol)
+					@draw_arrow(acx, acy, @arrow_size, dir_angle(cell.dir), arrowcol)
 				if ui.cshow and x == ui.cx and y == ui.cy
 					@dr.beginPath()
-					s = asz + 1
+					s = @arrow_size + 1
 					b = s / 2
 					for i in [0 .. 3]
 						@dr.save()
@@ -1077,7 +1027,7 @@ class drawstate
 				# Draw dot iff this tile requires a predecessor and doesn't have one.
 				if not arrow_in and cell.num != 1
 					@dr.beginPath()
-					@dr.arc @tilesize/2 - asz, @tilesize/2 + asz, asz / 4, 0, 2 * Math.PI, false
+					@dr.arc @tilesize/2 - @arrow_size, @tilesize/2 + @arrow_size, @arrow_size / 4, 0, 2 * Math.PI, false
 					@dr.fillStyle = COL_ARROW
 					@dr.fill()
 				# Draw text (number or set).
@@ -1113,26 +1063,36 @@ class drawstate
 				@dr.strokeRect(0, 0, @tilesize, @tilesize)
 				@dr.restore()
 		if ui.dragging
-			@dragging = true
-			@dx = ui.dx - @tilesize/2
-			@dy = ui.dy - @tilesize/2
-			@draw_drag_indicator(state, ui, postdrop?)
-
-
+			if postdrop?
+				# If we could move here, lock the arrow to the appropriate direction.
+				if ui.drag_is_from
+					dir = state.cells[ui.sy * state.w + ui.sx].dir 
+				else
+					[fx, fy] = @cell_at(ui.dx, ui.dy)
+					dir = state.cells[fy * state.w + fx].dir
+				ang = dir_angle(dir)
+			else
+				# Draw an arrow pointing away from/towards the origin cell.
+				[ox, oy] = @cell_center(ui.sx, ui.sy)
+				ang = point_angle(ox, oy, ui.dx, ui.dy)
+				if not ui.drag_is_from
+					ang += Math.PI # poto origin, not away from.
+			@draw_arrow(ui.dx, ui.dy, @arrow_size, ang, COL_ARROW)
+	null
 
 
 window.onload = ->
 	params = new GameParams(6, 6, true)
 	states = [params.new_game()]
 	current_state = 0
-	ui = new game_ui()
+	ui = new GameUI()
 
 	canvas = document.createElement 'canvas'
 	document.body.appendChild canvas
 	canvas.width = 300
 	canvas.height = 300
 	ctx = canvas.getContext '2d'
-	ds = new drawstate(ctx)
+	ds = new CanvasPainter(ctx, params)
 
 	draw = ->
 		ds.game_redraw(states[current_state], ui)
@@ -1161,7 +1121,6 @@ window.onload = ->
 			true
 		else
 			false
-
 
 	window.onkeydown = (event) ->
 		switch event.keyCode
