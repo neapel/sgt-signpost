@@ -898,7 +898,7 @@ dimbg = (a) ->
 
 
 class drawstate
-	constructor: (@dr, state) ->
+	constructor: (@dr) ->
 		@tilesize = 40
 		@border = @tilesize/2
 		@ARROW_HALFSZ = 7 * @tilesize / 32
@@ -1123,26 +1123,44 @@ class drawstate
 
 window.onload = ->
 	params = new GameParams(6, 6, true)
-	for i in [0 .. 50]
-		state = [params.new_game()]
+	states = [params.new_game()]
+	current_state = 0
 	ui = new game_ui()
-
 
 	canvas = document.createElement 'canvas'
 	document.body.appendChild canvas
 	canvas.width = 300
 	canvas.height = 300
 	ctx = canvas.getContext '2d'
-	ds = new drawstate(ctx, state[0])
+	ds = new drawstate(ctx)
 
-	ds.game_redraw(state[0], ui)
+	draw = ->
+		ds.game_redraw(states[current_state], ui)
 
 	make_move = (button, x, y) ->
-		mov = ui.interpret_move(state[0], ds, x, y, button)
+		mov = ui.interpret_move(states[current_state], ds, x, y, button)
 		if mov
-			new_state = state[0].execute_move(mov)
-			state.unshift(new_state)
-		ds.game_redraw(state[0], ui)
+			new_state = states[current_state].execute_move(mov)
+			states = states[..current_state]
+			states.push(new_state)
+			current_state++
+		draw()
+
+	undo_move = ->
+		if current_state > 0
+			current_state--
+			draw()
+			true
+		else
+			false
+
+	redo_move = ->
+		if current_state < states.length - 1
+			current_state++
+			draw()
+			true
+		else
+			false
 
 
 	window.onkeydown = (event) ->
@@ -1166,11 +1184,12 @@ window.onload = ->
 				make_move(CURSOR_SELECT2)
 				event.preventDefault()
 			when 85 # u: undo
-				if state.length > 1
-					state.shift()
-					ds.game_redraw(state[0], ui)
+				if undo_move()
 					event.preventDefault()
-
+			when 82 # r: redo
+				if redo_move()
+					event.preventDefault()
+	
 	canvas.oncontextmenu = (event) ->
 		event.stopImmediatePropagation()
 		event.preventDefault()
@@ -1217,3 +1236,4 @@ window.onload = ->
 				when 2
 					make_move(RIGHT_DRAG, x, y)
 
+	draw()
