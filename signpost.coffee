@@ -1,6 +1,5 @@
 # signpost.c: implementation of the janko game 'arrow path'
-
-Math.seedrandom('foo')
+Math.seedrandom?('foo')
 
 class GameParams
 	constructor: (@w, @h, @force_corner_start) ->
@@ -708,11 +707,8 @@ LEFT_BUTTON = 1
 MIDDLE_BUTTON = 2
 RIGHT_BUTTON = 3
 LEFT_DRAG = 4
-MIDDLE_DRAG = 5
-RIGHT_DRAG = 6
-LEFT_RELEASE = 7
-MIDDLE_RELEASE = 8
-RIGHT_RELEASE = 9
+MOUSE_DRAG = 5
+MOUSE_RELEASE = 7
 CURSOR_UP = 10
 CURSOR_DOWN = 11
 CURSOR_LEFT = 12
@@ -722,10 +718,6 @@ CURSOR_SELECT2 = 15
 
 IS_MOUSE_DOWN = (m) ->
 	m - LEFT_BUTTON <= RIGHT_BUTTON - LEFT_BUTTON
-IS_MOUSE_DRAG = (m) ->
-	m - LEFT_DRAG <= RIGHT_DRAG - LEFT_DRAG
-IS_MOUSE_RELEASE = (m) ->
-	m - LEFT_RELEASE <= RIGHT_RELEASE - LEFT_RELEASE
 IS_CURSOR_MOVE = (m) ->
 	m == CURSOR_UP || m == CURSOR_DOWN || m == CURSOR_RIGHT || m == CURSOR_LEFT
 IS_CURSOR_SELECT = (m) ->
@@ -840,9 +832,9 @@ class GameUI
 			@interpret_cursor(state, ds, button)
 		else if IS_MOUSE_DOWN(button)
 			@interpret_mouse_down(state, ds, mx, my, button)
-		else if IS_MOUSE_DRAG(button)
+		else if button == MOUSE_DRAG
 			@interpret_mouse_drag(mx, my)
-		else if IS_MOUSE_RELEASE(button) and @dragging
+		else if button == MOUSE_RELEASE and @dragging
 			@dragging = false
 			@interpret_mouse_drag_release(state, ds, mx, my)
 		else if (button == 'x' or button == 'X') and @cshow
@@ -889,11 +881,8 @@ region_color = (set) ->
 	Color({hue: hue, saturation: 0.3, value: 1}).toCSS()
 
 class CanvasPainter
-	constructor: (@dr, params) ->
-		tsx = @dr.canvas.width / params.w
-		tsy = @dr.canvas.height / params.h
-		@tilesize = Math.floor(Math.min(tsx, tsy))
-		@arrow_size = 7 * @tilesize / 32
+	constructor: (@dr) ->
+		null
 
 	# return coordinate of tile center from index
 	cell_center: (cx, cy) ->
@@ -902,13 +891,13 @@ class CanvasPainter
 		
 	# return coordinate of upper left corner
 	cell_coord: (x, y) ->
-		[x * @tilesize, y * @tilesize]
+		[x * @tilesize + @center_x, y * @tilesize + @center_y]
 
 	# return cell index for coordinate
 	cell_at: (x, y) ->
 		[
-			0|((x + @tilesize) / @tilesize) - 1
-			0|((y + @tilesize) / @tilesize) - 1
+			Math.floor((x + @tilesize - @center_x) / @tilesize) - 1
+			Math.floor((y + @tilesize - @center_y) / @tilesize) - 1
 		]
 
 	# cx, cy are top-left corner. r is the 'radius' of the arrow.
@@ -951,6 +940,16 @@ class CanvasPainter
 
 
 	game_redraw: (state, ui) ->
+		@dr.canvas.width = @dr.canvas.width
+		cw = @dr.canvas.width
+		ch = @dr.canvas.height
+		tsx = (cw * 0.8) / state.w
+		tsy = (ch * 0.8) / state.h
+		@tilesize = Math.floor(Math.min(80,Math.min(tsx, tsy)))
+		@arrow_size = 7 * @tilesize / 32
+		@center_x = 0|((cw - state.w * @tilesize) / 2)
+		@center_y = 0|((ch - state.h * @tilesize) / 3)
+
 		postdrop = null
 		# If an in-progress drag would make a valid move if finished, we
 		# reflect that move in the board display. We let interpret_move do
@@ -963,7 +962,8 @@ class CanvasPainter
 		aw = @tilesize * state.w
 		ah = @tilesize * state.h
 		@dr.fillStyle = COL_BACKGROUND
-		@dr.fillRect(0, 0, aw, ah)
+		[bgx, bgy] = @cell_coord(0, 0)
+		@dr.fillRect(bgx, bgy, aw, ah)
 		for x in [0 .. state.w - 1]
 			for y in [0 .. state.h - 1]
 				@dr.save()
@@ -1010,12 +1010,15 @@ class CanvasPainter
 				else
 					@draw_arrow(acx, acy, @arrow_size, dir_angle(cell.dir), arrowcol)
 				if ui.cshow and x == ui.cx and y == ui.cy
+					@dr.save()
+					@dr.translate(0.5, 0.5)
 					@dr.beginPath()
-					s = @arrow_size + 1
+					m = 1
+					s = @arrow_size + 2 * m
 					b = s / 2
 					for i in [0 .. 3]
 						@dr.save()
-						@dr.translate acx, acy
+						@dr.translate acx - m, acy - m
 						@dr.rotate i * Math.PI / 2
 						@dr.moveTo s, s - b
 						@dr.lineTo s, s
@@ -1023,6 +1026,7 @@ class CanvasPainter
 						@dr.restore()
 					@dr.strokeStyle = COL_CURSOR
 					@dr.stroke()
+					@dr.restore()
 				@dr.restore()
 				# Draw dot iff this tile requires a predecessor and doesn't have one.
 				if not arrow_in and cell.num != 1
@@ -1059,6 +1063,8 @@ class CanvasPainter
 						@dr.font = "#{@tilesize * 0.35}px sans-serif"
 						@dr.fillText(buf, @tilesize * 0.1, @tilesize * 0.4)
 				@dr.restore()
+				@dr.globalAlpha = 1
+				@dr.translate(0.5, 0.5)
 				@dr.strokeStyle = COL_GRID
 				@dr.strokeRect(0, 0, @tilesize, @tilesize)
 				@dr.restore()
@@ -1080,31 +1086,68 @@ class CanvasPainter
 			@draw_arrow(ui.dx, ui.dy, @arrow_size, ang, COL_ARROW)
 	null
 
+handle = (e, l, f) ->
+	e.addEventListener(l, f, false)
 
-window.onload = ->
-	params = new GameParams(6, 6, true)
-	states = [params.new_game()]
-	current_state = 0
+handle window, 'load', ->
 	ui = new GameUI()
-
-	canvas = document.createElement 'canvas'
-	document.body.appendChild canvas
-	canvas.width = 300
-	canvas.height = 300
+	canvas = document.getElementById 'game'
+	canvas.style.display = 'block'
+	canvas.width = window.innerWidth
+	canvas.height = window.innerHeight
 	ctx = canvas.getContext '2d'
-	ds = new CanvasPainter(ctx, params)
+	ds = new CanvasPainter(ctx)
+
+	setup = document.getElementById 'setup'
+	setup_width = document.getElementById 'width'
+	setup_height = document.getElementById 'height'
+	play_button = document.getElementById 'play'
+	won = document.getElementById 'won'
+	again_button = document.getElementById 'again'
+	corner_start = document.getElementById 'corner_start'
+	fail = document.getElementById 'fail'
+	fail.style.display = 'none'
+
+	handle again_button, 'click', ->
+		won.style.display = 'none'
+		setup.style.display = 'block'
+
+	setup.style.display = 'block'
+
+	params = new GameParams(6, 6, true)
+	states = []
+	current_state = 0
 
 	draw = ->
-		ds.game_redraw(states[current_state], ui)
+		if 0 <= current_state < states.length
+			ds.game_redraw(states[current_state], ui)
 
-	make_move = (button, x, y) ->
-		mov = ui.interpret_move(states[current_state], ds, x, y, button)
-		if mov
-			new_state = states[current_state].execute_move(mov)
-			states = states[..current_state]
-			states.push(new_state)
-			current_state++
-		draw()
+	start_game = ->
+		w = 0| +setup_width.value
+		h = 0| +setup_height.value
+		c = !!+corner_start.value
+		if 3 <= w <= 50 and 3 <= h <= 50
+			params = new GameParams(w, h, c)
+			states = [params.new_game()]
+			current_state = 0
+			draw()
+
+	handle play_button, 'click', ->
+		start_game()
+		setup.style.display = 'none'
+
+	x = y = 0
+	make_move = (button) ->
+		if 0 <= current_state < states.length and not states[current_state].completed
+			mov = ui.interpret_move(states[current_state], ds, x, y, button)
+			if mov
+				new_state = states[current_state].execute_move(mov)
+				states = states[..current_state]
+				states.push(new_state)
+				current_state++
+			draw()
+			if states[current_state].completed
+				won.style.display = 'block'
 
 	undo_move = ->
 		if current_state > 0
@@ -1122,7 +1165,7 @@ window.onload = ->
 		else
 			false
 
-	window.onkeydown = (event) ->
+	handle window, 'keydown', (event) ->
 		switch event.keyCode
 			when 37, 65 # left, a: move cursor
 				make_move(CURSOR_LEFT)
@@ -1149,50 +1192,47 @@ window.onload = ->
 				if redo_move()
 					event.preventDefault()
 	
-	canvas.oncontextmenu = (event) ->
-		event.stopImmediatePropagation()
+	handle canvas, 'contextmenu', (event) ->
+		event.stopImmediatePropagation?()
 		event.preventDefault()
 
 	mouse_is_down = false
-	canvas.onmousedown = (event) ->
+	handle canvas, 'mousedown', (event) ->
 		mouse_is_down = true
-		event.stopImmediatePropagation()
+		event.stopImmediatePropagation?()
 		event.preventDefault()
 		x = event.clientX
 		y = event.clientY
 		switch event.button
 			when 0
-				make_move(LEFT_BUTTON, x, y)
+				make_move(LEFT_BUTTON)
 			when 1
-				make_move(MIDDLE_BUTTON, x, y)
+				make_move(MIDDLE_BUTTON)
 			when 2
-				make_move(RIGHT_BUTTON, x, y)
-		
-	canvas.onmouseup = (event) ->
+				make_move(RIGHT_BUTTON)
+	
+	handle canvas, 'mouseup', (event) ->
 		mouse_is_down = false
-		event.stopImmediatePropagation()
+		event.stopImmediatePropagation?()
 		event.preventDefault()
 		x = event.clientX
 		y = event.clientY
-		switch event.button
-			when 0
-				make_move(LEFT_RELEASE, x, y)
-			when 1
-				make_move(MIDDLE_RELEASE, x, y)
-			when 2
-				make_move(RIGHT_RELEASE, x, y)
+		make_move(MOUSE_RELEASE)
+	
+	handle window, 'mouseup', (event) ->
+		mouse_is_down = false
+		make_move(MOUSE_RELEASE)
 
-	canvas.onmousemove = (event) ->
+	handle canvas, 'mousemove', (event) ->
 		if mouse_is_down
 			event.preventDefault()
 			x = event.clientX
 			y = event.clientY
-			switch event.button
-				when 0
-					make_move(LEFT_DRAG, x, y)
-				when 1
-					make_move(MIDDLE_DRAG, x, y)
-				when 2
-					make_move(RIGHT_DRAG, x, y)
+			make_move(MOUSE_DRAG)
+
+	handle window, 'resize', (event) ->
+		canvas.width = window.innerWidth
+		canvas.height = window.innerHeight
+		draw()
 
 	draw()

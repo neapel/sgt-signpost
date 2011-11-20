@@ -3,11 +3,22 @@
 	<head>
 		<meta charset='utf-8' />
 		<script src='color.js'></script>
-		<script src='seedrandom.js'></script>
+		<!--script src='seedrandom.js'></script-->
 		<script src='dsf.js'></script>
 		<script src='libc.js'></script>
 		<script src='signpost.js'></script>
+		<link rel='stylesheet' href='styles.css' />
 	</head>
 	<body>
+		<canvas id='game'></canvas>
+		<div id='setup'>
+			<p>You have a <input id='width' type='number' min='3' max='11' value='3' size='2' /> by <input id='height' type='number' min='3' max='11' value='3' size='2' /> grid. You want to create a path of increasing numbers from the first to the last field that follows the arrows. To do that, starting <select id='corner_start'><option value='1'>in a corner</option><option value='0'>somewhere</option></select> with <em>1</em> you drag its arrow to the field you want to label <em>2</em> and so on. Drag with the right mouse button to draw reversed arrows. When dragging from an empty field, you create a hint for yourself. The blue numbers are hints from the game, the red numbers are definitely wrong. <button id='play'>Better try it.</button></p>
+		</div>
+		<div id='won'>
+			<p>Nice. <button id='again'>Play again?</button></p>
+		</div>
+		<div id='fail'>
+			<p>Sorry but this game requires scripting and an HTML5 capable browser.</p>
+		</div>
 	</body>
 </html>

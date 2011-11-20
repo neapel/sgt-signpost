@@ -1,0 +1,43 @@
+html, body {
+	background: #e3e3e3;
+	margin: 0;
+	padding: 0;
+	overflow: hidden;
+}
+
+canvas {
+	position: absolute;
+	left: 0;
+	top: 0;
+}
+
+div {
+	position: absolute;
+	left: 0;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	padding: 2em;
+	background: #e3e3e3;
+	background: rgba(227, 227, 227, 0.9);
+	font: 150% sans-serif;
+}
+
+p {
+	max-width: 25em;
+	margin: 0 auto;
+}
+
+input, button, select {
+	font: inherit;
+}
+input {
+	max-width: 2em;
+}
+
+#won, #setup, canvas {
+	display: none;
+}
+#won {
+	text-align: center;
+}
